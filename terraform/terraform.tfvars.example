@@ -1,0 +1,9 @@
+# Copy this file to terraform.tfvars and fill in your actual values
+# DO NOT COMMIT terraform.tfvars with real secrets
+
+render_api_key  = "your-render-api-key-here"
+render_owner_id = "your-render-owner-id-here"
+openai_api_key  = "sk-your-openai-key-here"
+qdrant_url      = "https://xxxxx.qdrant.io"
+qdrant_api_key  = "ey-your-qdrant-key-here"
+frontend_url    = "https://physical-ai-textbook.vercel.app"

@@ -1,0 +1,87 @@
+[global]
+subdomain = "physical-ai-textbook"
+region = "us-east-1"
+
+[hasura]
+version = "v2.36.0-ce"
+admin_secret = "{{ secrets.HASURA_ADMIN_SECRET }}"
+webhook_secret = "{{ secrets.HASURA_WEBHOOK_SECRET }}"
+
+[hasura.settings]
+cors_domain = ["*"]
+dev_mode = true
+
+[hasura.resources]
+compute_units = 0.5
+memory = 1024
+
+[postgres]
+# Use your existing Neon database
+version = "14"
+
+[auth]
+access_control_allowed_headers = ["content-type", "x-hasura-admin-secret"]
+access_control_allowed_origins = ["*"]
+client_url = "{{ global.hasura.url }}"
+disable_new_users = false
+disable_signup = false
+email_passwordless_enabled = false
+gravatar_enabled = true
+gravatar_default = "blank"
+gravatar_rating = "g"
+locale_default = "en"
+mfa_enabled = false
+password_hibp_enabled = false
+password_min_length = 3
+refresh_token_expires_in = 2592000
+sms_passwordless_enabled = false
+user_default_allowed_roles = ["user", "me"]
+user_default_role = "user"
+user_management_url = "{{ global.hasura.url }}"
+
+[auth.method.oauth.github]
+enabled = true
+client_id = "{{ secrets.AUTH_GITHUB_CLIENT_ID }}"
+client_secret = "{{ secrets.AUTH_GITHUB_CLIENT_SECRET }}"
+
+[auth.method.oauth.google]
+enabled = true
+client_id = "{{ secrets.AUTH_GOOGLE_CLIENT_ID }}"
+client_secret = "{{ secrets.AUTH_GOOGLE_CLIENT_SECRET }}"
+
+[functions]
+node_version = 18
+
+[[functions.environment]]
+name = "DATABASE_URL"
+value = "{{ secrets.DATABASE_URL }}"
+
+[[functions.environment]]
+name = "OPENAI_API_KEY"
+value = "{{ secrets.OPENAI_API_KEY }}"
+
+[[functions.environment]]
+name = "QDRANT_URL"
+value = "{{ secrets.QDRANT_URL }}"
+
+[[functions.environment]]
+name = "QDRANT_API_KEY"
+value = "{{ secrets.QDRANT_API_KEY }}"
+
+[[functions.environment]]
+name = "JWT_SECRET"
+value = "{{ secrets.JWT_SECRET }}"
+
+[[functions.environment]]
+name = "REDIS_URL"
+value = "{{ secrets.REDIS_URL }}"
+
+[[functions.environment]]
+name = "VOICE_API_BASE_URL"
+value = "{{ secrets.VOICE_API_BASE_URL }}"
+
+[storage]
+force_download_for_content_types = "text/html,application/javascript"
+
+[observability]
+grafana = false

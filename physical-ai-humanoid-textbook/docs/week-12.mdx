@@ -1,0 +1,862 @@
+---
+id: week-12
+title: VLA Models & Real-World Applications
+sidebar_label: VLA Models & Industry Applications
+sidebar_position: 12
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Week 12: Vision-Language-Action Models & Real-World Applications
+
+## Learning Outcomes
+
+By the end of this module, you will be able to:
+
+1. **Explain** Vision-Language-Action (VLA) model architecture
+2. **Integrate** VLA models (RT-2, OpenVLA) with ROS 2 systems
+3. **Implement** LLM-to-ROS action translation pipelines
+4. **Design** multimodal perception systems (vision + language + proprioception)
+5. **Analyze** real-world humanoid deployments (manufacturing, healthcare, service)
+6. **Evaluate** safety and ethical considerations in autonomous systems
+
+---
+
+## 12.1 Vision-Language-Action Models
+
+### Architecture Overview
+
+**VLA models** [1] unify three modalities:
+
+```
+Natural Language Input: "Pick up the red mug"
+         ↓
+  ┌─────────────────────────────┐
+  │   Language Encoder (LLM)    │
+  │   e.g., GPT-4, PaLM         │
+  └──────────┬──────────────────┘
+             │ (text embeddings)
+             ↓
+  ┌─────────────────────────────┐
+  │   Vision Encoder (CLIP)     │
+  │   Processes camera images   │
+  └──────────┬──────────────────┘
+             │ (visual embeddings)
+             ↓
+  ┌─────────────────────────────┐
+  │   Fusion Transformer        │
+  │   Cross-attention between   │
+  │   text and vision           │
+  └──────────┬──────────────────┘
+             │ (fused representation)
+             ↓
+  ┌─────────────────────────────┐
+  │   Action Decoder            │
+  │   Generates robot actions   │
+  └──────────┬──────────────────┘
+             ↓
+      Joint Trajectories
+```
+
+**Figure 12.1**: VLA model pipeline. Language provides task specification, vision provides scene understanding, action decoder generates motor commands.
+
+---
+
+## 12.2 RT-2 (Robotics Transformer 2)
+
+### Training Data
+
+**RT-2** [1] trained on:
+1. **Web data**: 5 billion image-text pairs (LAION-5B, WebLI)
+2. **Robot data**: 800 tasks across 13 robots (130k+ demonstrations)
+
+**Key Innovation**: Co-training on internet data + robotics data enables zero-shot generalization.
+
+**Example**:
+- **Training**: Saw images of "apples" on the web, practiced picking "red objects" on robots
+- **Test**: Pick up a red apple (never seen during robot training) → **Succeeds**!
+
+### Model Specifications
+
+| Variant | Parameters | Training Data | Zero-Shot Success |
+|---------|------------|---------------|-------------------|
+| RT-2-PaLI-X | 55B | Web + 800 tasks | 62% |
+| RT-2-ViT | 6B | Robot only | 41% |
+| RT-1 (baseline) | 35M | Robot only | 32% |
+
+> **Arthur D. Little (2025)**: "VLA models represent a 10x capability jump—zero-shot success rates increased from 30% to 70-90% by leveraging internet-scale knowledge transfer." [2, p. 34]
+
+---
+
+## 12.3 Implementing VLA with OpenAI
+
+### LLM-to-ROS Translation
+
+```python
+#!/usr/bin/env python3
+"""
+LLM-based task planner for humanoid robots.
+Translates natural language to ROS 2 action sequences.
+
+Reference: Huang et al., "Language Models as Zero-Shot Planners," CoRL 2022
+"""
+
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import String
+from geometry_msgs.msg import PoseStamped
+import openai
+import json
+import os
+
+
+class VLATaskPlanner(Node):
+    """Natural language task planner using GPT-4."""
+
+    def __init__(self):
+        super().__init__('vla_task_planner')
+
+        # OpenAI setup
+        openai.api_key = os.getenv('OPENAI_API_KEY')
+
+        # Subscribe to voice commands
+        self.task_sub = self.create_subscription(
+            String,
+            '/voice_command',
+            self.task_callback,
+            10
+        )
+
+        # Publish action sequences
+        self.action_pub = self.create_publisher(
+            String,
+            '/action_sequence',
+            10
+        )
+
+        # Available robot actions
+        self.action_primitives = [
+            "navigate_to(x, y, theta)",
+            "detect_object(object_name)",
+            "grasp_object(object_name, grasp_type)",
+            "release_object()",
+            "look_at(target)",
+            "say(text)"
+        ]
+
+        self.get_logger().info('VLA task planner ready')
+
+    def task_callback(self, msg):
+        """Decompose natural language task into action primitives."""
+        task = msg.data
+        self.get_logger().info(f'Task received: "{task}"')
+
+        # Build prompt for GPT-4
+        system_prompt = f"""You are a task planner for a humanoid robot.
+
+Available actions:
+{chr(10).join('- ' + action for action in self.action_primitives)}
+
+Given a natural language task, decompose it into a sequence of primitive actions.
+Respond in JSON format:
+
+{{
+  "reasoning": "step-by-step thought process",
+  "actions": [
+    {{"action": "navigate_to", "params": {{"x": 2.0, "y": 0.0, "theta": 0.0}}}},
+    {{"action": "detect_object", "params": {{"object_name": "mug"}}}},
+    ...
+  ]
+}}
+
+Be specific with coordinates and object names. Ensure actions are executable sequentially.
+"""
+
+        user_prompt = f"Task: {task}\n\nPlan the action sequence."
+
+        try:
+            # Call GPT-4
+            response = openai.ChatCompletion.create(
+                model="gpt-4-turbo-preview",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                max_tokens=1000,
+                temperature=0.3  # Lower temperature for deterministic planning
+            )
+
+            # Parse response
+            content = response.choices[0].message.content
+
+            # Extract JSON (may have markdown code blocks)
+            if "```json" in content:
+                json_str = content.split("```json")[1].split("```")[0].strip()
+            elif "```" in content:
+                json_str = content.split("```")[1].split("```")[0].strip()
+            else:
+                json_str = content
+
+            plan = json.loads(json_str)
+
+            self.get_logger().info(f"Reasoning: {plan['reasoning']}")
+            self.get_logger().info(f"Actions: {len(plan['actions'])} steps")
+
+            # Publish action sequence
+            msg_out = String()
+            msg_out.data = json.dumps(plan['actions'])
+            self.action_pub.publish(msg_out)
+
+        except Exception as e:
+            self.get_logger().error(f'Task planning failed: {e}')
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = VLATaskPlanner()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+**Example Execution**:
+
+**Input**: "Go to the kitchen table, pick up the red mug, and bring it to me."
+
+**Output**:
+```json
+{
+  "reasoning": "1. Navigate to table coordinates. 2. Detect mug visually. 3. Approach and grasp. 4. Locate human. 5. Navigate to human. 6. Extend arm for handoff.",
+  "actions": [
+    {"action": "navigate_to", "params": {"x": 2.5, "y": 0.0, "theta": 0.0}},
+    {"action": "detect_object", "params": {"object_name": "red_mug"}},
+    {"action": "grasp_object", "params": {"object_name": "red_mug", "grasp_type": "top"}},
+    {"action": "detect_object", "params": {"object_name": "human"}},
+    {"action": "navigate_to", "params": {"x": 0.0, "y": 0.0, "theta": 3.14}},
+    {"action": "say", "params": {"text": "Here is your mug"}}
+  ]
+}
+```
+
+---
+
+## 12.4 Multimodal Perception
+
+### Combining Vision, Language, and Proprioception
+
+**China Unicom Framework** [3]: Multimodal models process heterogeneous data streams.
+
+```python
+#!/usr/bin/env python3
+"""
+Multimodal state representation.
+Fuses vision (CLIP), language (GPT), and proprioception.
+"""
+
+import torch
+import clip
+from transformers import GPT2Model, GPT2Tokenizer
+import numpy as np
+
+
+class MultimodalStateEncoder:
+    """Encode robot state from multiple modalities."""
+
+    def __init__(self):
+        # Vision: CLIP
+        self.clip_model, self.clip_preprocess = clip.load("ViT-B/32", device="cuda")
+
+        # Language: GPT-2
+        self.gpt_tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
+        self.gpt_model = GPT2Model.from_pretrained("gpt2").cuda()
+
+        # Fusion network
+        self.fusion_net = torch.nn.Sequential(
+            torch.nn.Linear(512 + 768 + 64, 512),  # CLIP + GPT + proprio
+            torch.nn.ReLU(),
+            torch.nn.Linear(512, 256)
+        ).cuda()
+
+    def encode(self, image, task_description, proprioception):
+        """
+        Encode multimodal state.
+
+        Args:
+            image: RGB image (numpy array)
+            task_description: String (e.g., "pick up the mug")
+            proprioception: Joint positions, velocities (numpy array)
+
+        Returns:
+            Fused state embedding (256-dim)
+        """
+        # Vision encoding
+        image_tensor = self.clip_preprocess(image).unsqueeze(0).cuda()
+        with torch.no_grad():
+            vision_features = self.clip_model.encode_image(image_tensor)  # 512-dim
+
+        # Language encoding
+        tokens = self.gpt_tokenizer(task_description, return_tensors="pt")
+        tokens = {k: v.cuda() for k, v in tokens.items()}
+        with torch.no_grad():
+            language_features = self.gpt_model(**tokens).last_hidden_state.mean(dim=1)  # 768-dim
+
+        # Proprioception encoding
+        proprio_tensor = torch.FloatTensor(proprioception).unsqueeze(0).cuda()  # 64-dim (e.g., 32 joints × 2)
+
+        # Concatenate and fuse
+        combined = torch.cat([vision_features, language_features, proprio_tensor], dim=1)
+        fused_state = self.fusion_net(combined)
+
+        return fused_state.cpu().numpy()
+
+
+# Usage
+if __name__ == "__main__":
+    encoder = MultimodalStateEncoder()
+
+    # Mock inputs
+    image = np.random.rand(224, 224, 3).astype(np.uint8)
+    task = "grasp the red object"
+    proprio = np.random.rand(64)  # 32 joints × 2 (pos, vel)
+
+    # Encode
+    state = encoder.encode(image, task, proprio)
+    print(f"Encoded state shape: {state.shape}")  # (1, 256)
+```
+
+---
+
+## 12.5 Real-World Deployments
+
+### Manufacturing: BMW Leipzig Plant
+
+**Figure 01 Deployment** [4]:
+
+- **Task**: Installing door panels on vehicle assembly line
+- **Robot**: Figure 01 humanoid (1.7m, 60kg)
+- **Integration**: OpenAI VLA model for task understanding
+- **Performance**:
+  - Success rate: 95% (vs. 98% for specialized automation)
+  - Cycle time: 45 seconds per panel
+  - Flexibility: Same robot handles 3 different car models
+- **Economics**: ROI in 2.5 years at $90k/unit cost
+
+**Key Insight**: Flexibility justifies lower success rate—reconfiguring specialized automation costs $500k and 6 months.
+
+### Healthcare: Elder Care in Japan
+
+**RIKEN ROBEAR** [3, p. 97]:
+
+- **Capability**: Patient lifting and transfer (up to 80 kg)
+- **Safety**: Compliant actuators, force sensing, visual monitoring
+- **Deployment**: 15 nursing homes (pilot program, 2023-2024)
+- **User Acceptance**: 72% of patients reported feeling safe
+- **Challenge**: Cost ($150k/unit) limits widespread adoption
+
+### Service: Henn-na Hotel, Japan
+
+**Humanoid Receptionists**:
+
+- **Tasks**: Check-in, answering questions, luggage handling
+- **Languages**: Japanese, English, Chinese, Korean
+- **Deployment**: 2015-present
+- **Outcome**: Partially replaced by humans (2019) due to:
+  - Limited problem-solving (unexpected requests)
+  - Maintenance costs
+  - Uncanny valley effect reduced guest satisfaction
+
+**Lesson**: Humanoids excel at structured, repetitive tasks but struggle with open-ended interactions requiring common sense.
+
+---
+
+## 12.6 Decentralized Compute Architecture
+
+### Edge + Cloud Hybrid
+
+**Arthur D. Little Model** [2, pp. 12-14]:
+
+```
+┌────────────────────────────────────┐
+│        Cloud (Centralized)         │
+│  - Foundation model training       │
+│  - World model updates             │
+│  - Fleet learning aggregation      │
+└────────────┬───────────────────────┘
+             │ (WiFi/5G)
+┌────────────▼───────────────────────┐
+│      Edge (On-Robot GPU)           │
+│  - VLA inference (100-500ms)       │
+│  - Perception (60 FPS)             │
+│  - Local planning                  │
+└────────────┬───────────────────────┘
+             │ (CAN bus)
+┌────────────▼───────────────────────┐
+│  Embedded (Microcontrollers)       │
+│  - Joint control (1 kHz)           │
+│  - Safety monitoring (10 kHz)      │
+│  - Emergency stops                 │
+└────────────────────────────────────┘
+```
+
+**Latency Requirements**:
+- **Safety**: &lt;1ms (hardware e-stop)
+- **Control**: 1-10ms (joint servo loops)
+- **Planning**: 10-100ms (MPC, local planning)
+- **VLA**: 100-500ms (task-level commands)
+
+### Implementation
+
+```python
+#!/usr/bin/env python3
+"""
+Hierarchical control with edge/cloud compute.
+
+High-level: Cloud VLA (slow, intelligent)
+Mid-level: Edge MPC (fast, reactive)
+Low-level: Microcontroller PID (real-time, safety)
+"""
+
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import String
+from geometry_msgs.msg import Twist
+import asyncio
+import httpx
+
+
+class HierarchicalController(Node):
+    """Three-layer control architecture."""
+
+    def __init__(self):
+        super().__init__('hierarchical_controller')
+
+        # Subscribe to high-level tasks (from cloud VLA)
+        self.task_sub = self.create_subscription(
+            String,
+            '/task_command',
+            self.task_callback,
+            10
+        )
+
+        # Publish mid-level goals (to edge MPC)
+        self.goal_pub = self.create_publisher(
+            Twist,
+            '/target_velocity',
+            10
+        )
+
+        # Cloud API endpoint
+        self.cloud_api_url = "https://vla-api.example.com/plan"
+
+        self.get_logger().info('Hierarchical controller ready')
+
+    async def query_cloud_vla(self, task, image):
+        """
+        Query cloud VLA model for high-level plan.
+
+        Latency: 200-500ms
+        """
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                self.cloud_api_url,
+                json={
+                    "task": task,
+                    "image": image.tolist(),  # Serialized image
+                    "robot_state": self.get_robot_state()
+                },
+                timeout=5.0
+            )
+
+            plan = response.json()
+            return plan['action_sequence']
+
+    def task_callback(self, msg):
+        """Handle high-level task command."""
+        task = msg.data
+        self.get_logger().info(f'Task: "{task}"')
+
+        # Query cloud VLA (async)
+        # In real implementation, use asyncio properly
+        # For demo, simplified:
+
+        # Placeholder: Generate mid-level velocity goals
+        # Real: Parse cloud response
+
+        goal = Twist()
+        if "forward" in task.lower():
+            goal.linear.x = 0.5
+        elif "turn left" in task.lower():
+            goal.angular.z = 0.5
+
+        self.goal_pub.publish(goal)
+
+    def get_robot_state(self):
+        """Get current robot state for context."""
+        return {
+            "joint_positions": [0.0] * 30,  # Placeholder
+            "battery": 85,
+            "location": [0.0, 0.0]
+        }
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = HierarchicalController()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+---
+
+## 12.7 Dexterous Manipulation
+
+### Grasp Planning with Vision
+
+```python
+#!/usr/bin/env python3
+"""
+Grasp planning using learned grasp quality networks.
+
+Reference: Mahler et al., "Dex-Net 2.0: Deep Learning to Plan Robust Grasps," RSS 2017
+"""
+
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import Image, PointCloud2
+from geometry_msgs.msg import PoseStamped
+from cv_bridge import CvBridge
+import torch
+import numpy as np
+
+
+class GraspPlannerNode(Node):
+    """Learned grasp planner using depth images."""
+
+    def __init__(self):
+        super().__init__('grasp_planner')
+
+        # Subscribe to depth camera
+        self.depth_sub = self.create_subscription(
+            Image,
+            '/camera/depth/image_raw',
+            self.depth_callback,
+            10
+        )
+
+        # Publish grasp poses
+        self.grasp_pub = self.create_publisher(
+            PoseStamped,
+            '/grasp_pose',
+            10
+        )
+
+        self.bridge = CvBridge()
+
+        # Load GraspNet model (hypothetical)
+        self.model = torch.hub.load('graspnet', 'graspnet_baseline')
+        self.model.eval().cuda()
+
+        self.get_logger().info('Grasp planner ready')
+
+    def depth_callback(self, msg):
+        """Plan grasps from depth image."""
+        # Convert to numpy
+        depth_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='passthrough')
+
+        # Normalize to [0, 1]
+        depth_normalized = depth_image / depth_image.max()
+
+        # Inference
+        with torch.no_grad():
+            depth_tensor = torch.FloatTensor(depth_normalized).unsqueeze(0).unsqueeze(0).cuda()
+            grasp_map = self.model(depth_tensor)  # Output: (H, W) grasp quality scores
+
+        # Find best grasp
+        grasp_scores = grasp_map.cpu().numpy()[0, 0]
+        best_pixel = np.unravel_index(np.argmax(grasp_scores), grasp_scores.shape)
+
+        best_score = grasp_scores[best_pixel]
+
+        self.get_logger().info(
+            f'Best grasp at pixel ({best_pixel[0]}, {best_pixel[1]}) '
+            f'with score {best_score:.3f}'
+        )
+
+        # Convert pixel to 3D pose (requires camera calibration)
+        grasp_pose = self.pixel_to_pose(best_pixel, depth_image)
+
+        # Publish
+        self.grasp_pub.publish(grasp_pose)
+
+    def pixel_to_pose(self, pixel, depth_image):
+        """Convert pixel coordinates to 3D grasp pose."""
+        # Camera intrinsics (example for Intel RealSense D435)
+        fx, fy = 615.0, 615.0  # Focal lengths
+        cx, cy = 320.0, 240.0  # Principal point
+
+        u, v = pixel
+        z = depth_image[v, u]  # Depth at pixel
+
+        # Backproject to 3D
+        x = (u - cx) * z / fx
+        y = (v - cy) * z / fy
+
+        # Create pose message
+        pose = PoseStamped()
+        pose.header.frame_id = 'camera_link'
+        pose.header.stamp = self.get_clock().now().to_msg()
+
+        pose.pose.position.x = x
+        pose.pose.position.y = y
+        pose.pose.position.z = z
+
+        # Grasp orientation (approach from above)
+        pose.pose.orientation.x = 1.0
+        pose.pose.orientation.y = 0.0
+        pose.pose.orientation.z = 0.0
+        pose.pose.orientation.w = 0.0  # 180° rotation
+
+        return pose
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = GraspPlannerNode()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+---
+
+## 12.8 Safety & Failure Recovery
+
+### Failure Modes
+
+**Common Failures** in humanoid systems:
+
+1. **Loss of balance**: Unexpected push, slippery surface
+2. **Grasp failure**: Object slips, grasp force too weak/strong
+3. **Collision**: Unexpected obstacles, human in path
+4. **Sensor failure**: Camera occlusion, IMU drift
+5. **Communication loss**: WiFi dropout, latency spike
+
+### Recovery Strategies
+
+```python
+#!/usr/bin/env python3
+"""
+Safety monitor and failure recovery system.
+"""
+
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import Imu, JointState
+from geometry_msgs.msg import Twist
+from std_msgs.msg import Bool
+import numpy as np
+
+
+class SafetyMonitor(Node):
+    """Monitor robot state and trigger recovery behaviors."""
+
+    def __init__(self):
+        super().__init__('safety_monitor')
+
+        # Subscribe to IMU
+        self.imu_sub = self.create_subscription(
+            Imu,
+            '/imu/data',
+            self.imu_callback,
+            10
+        )
+
+        # Subscribe to joint states
+        self.joint_sub = self.create_subscription(
+            JointState,
+            '/joint_states',
+            self.joint_callback,
+            10
+        )
+
+        # Publish emergency stop
+        self.estop_pub = self.create_publisher(
+            Bool,
+            '/emergency_stop',
+            10
+        )
+
+        # Publish recovery commands
+        self.recovery_pub = self.create_publisher(
+            Twist,
+            '/recovery_cmd',
+            10
+        )
+
+        self.is_stable = True
+
+    def imu_callback(self, msg):
+        """Monitor balance from IMU."""
+        # Extract orientation (quaternion to up vector)
+        qx, qy, qz, qw = msg.orientation.x, msg.orientation.y, msg.orientation.z, msg.orientation.w
+
+        # Up vector in world frame
+        up_x = 2 * (qx*qz + qw*qy)
+        up_y = 2 * (qy*qz - qw*qx)
+        up_z = 1 - 2 * (qx**2 + qy**2)
+
+        # Check if upright (up_z should be close to 1)
+        tilt_angle = np.arccos(np.clip(up_z, -1.0, 1.0))
+
+        if tilt_angle > np.radians(30):  # 30-degree threshold
+            self.get_logger().warn(f'⚠️  TILT DETECTED: {np.degrees(tilt_angle):.1f}°')
+
+            if tilt_angle > np.radians(45):  # Critical
+                self.trigger_emergency_stop()
+                self.initiate_recovery("squat")  # Lower CoM
+
+    def joint_callback(self, msg):
+        """Monitor joint limits."""
+        for i, pos in enumerate(msg.position):
+            # Check if approaching limits (placeholder - need actual limits)
+            if abs(pos) > 2.5:  # Near ±2.5 rad limit
+                self.get_logger().warn(f'⚠️  Joint {i} near limit: {pos:.2f} rad')
+
+    def trigger_emergency_stop(self):
+        """Trigger hardware emergency stop."""
+        self.get_logger().error('🛑 EMERGENCY STOP TRIGGERED')
+
+        msg = Bool()
+        msg.data = True
+        self.estop_pub.publish(msg)
+
+        self.is_stable = False
+
+    def initiate_recovery(self, recovery_type):
+        """Execute recovery behavior."""
+        self.get_logger().info(f'Initiating recovery: {recovery_type}')
+
+        cmd = Twist()
+
+        if recovery_type == "squat":
+            # Lower CoM by bending knees
+            # (In practice, send joint trajectory)
+            pass
+        elif recovery_type == "step":
+            # Take recovery step
+            cmd.linear.x = 0.2
+            self.recovery_pub.publish(cmd)
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = SafetyMonitor()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+---
+
+## Exercises
+
+### Basic (40%)
+1. **Implement** VLA task planner for 3 tasks: "go forward," "turn around," "wave hello." Test with GPT-4 API.
+
+2. **Create** a multimodal state encoder combining camera image (CLIP) and joint positions. Encode 10 different states.
+
+3. **Research** one real-world humanoid deployment (BMW, Henn-na Hotel, or elder care). Summarize: tasks, challenges, outcomes.
+
+### Intermediate (40%)
+4. **Implement** grasp quality prediction from depth images:
+   - Use a simple CNN to predict grasp success probability
+   - Train on 1000 synthetic grasps (Isaac Sim)
+   - Test on 100 real images
+
+5. **Build** safety monitor that detects 3 failure modes:
+   - Tilt >30°
+   - Joint position limits exceeded
+   - Object slip (force/torque sensor)
+   Trigger appropriate recovery behaviors.
+
+6. **Compare** centralized vs. edge compute:
+   - Latency: Cloud API (measure) vs. local inference (measure)
+   - Throughput: Images/second processed
+   - Cost: Cloud API pricing vs. GPU hardware
+
+### Advanced (20%)
+7. **Implement** RT-2-style VLA:
+   - Pre-train vision encoder on ImageNet
+   - Co-train on 100 robot demonstrations
+   - Test zero-shot on novel objects
+   - Report success rate vs. from-scratch training
+
+8. **Design** failure recovery system:
+   - Detect 5 failure modes
+   - Define recovery strategies for each
+   - Implement state machine with recovery transitions
+   - Test in simulation (inject failures)
+
+9. **Capstone Integration**:
+   - Integrate VLA planner with your Week 13 system
+   - Add safety monitoring (tilt, collisions)
+   - Implement 2 recovery behaviors
+   - Test: 50 tasks with 10 random failures injected
+   - Report: Success rate with/without recovery
+
+---
+
+## Further Reading
+
+- **RT-2 Paper**: Brohan et al., "RT-2: Vision-Language-Action Models," arXiv:2307.15818, 2023
+- **PaLM-E**: Driess et al., "PaLM-E: An Embodied Multimodal Language Model," arXiv:2303.03378, 2023
+- **OpenVLA**: https://openvla.github.io/
+- **Dex-Net**: Mahler et al., "Dex-Net 2.0: Deep Learning to Plan Robust Grasps," RSS 2017
+
+---
+
+## Summary
+
+- **VLA models** unify vision, language, and action for task-level robot control
+- **RT-2**: 55B parameter model trained on web + robot data achieves 62% zero-shot success
+- **LLM-to-ROS**: GPT-4 decomposes tasks into action primitives
+- **Multimodal perception**: Fuse CLIP (vision) + GPT (language) + proprioception
+- **Real-world deployments**: Manufacturing (BMW), healthcare (ROBEAR), service (hotels)
+- **Decentralized compute**: Cloud VLA + edge perception + embedded control
+- **Safety**: Multi-layer monitoring, failure detection, recovery behaviors
+
+**Next**: [Week 13: Capstone Project - Conversational Humanoid](./week-13)
+
+---
+
+## References
+
+[1] A. Brohan et al., "RT-2: Vision-Language-Action Models Transfer Web Knowledge to Robotic Control," arXiv:2307.15818, 2023.
+
+[2] Arthur D. Little, "BLUE SHIFT Physical AI," 2025, pp. 12-14, 34.
+
+[3] China Unicom Research Institute, "Applications and Development Prospects of Humanoid Robots," 2025, p. 97.
+
+[4] J. Rauf, "Exploring Humanoid Robots 8," OLLI Presentation, 2025.
+
+---
+
+

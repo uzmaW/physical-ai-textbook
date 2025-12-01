@@ -1,0 +1,67 @@
+# 📋 Copy-Paste Template for Nhost Environment Variables
+# Go to: app.nhost.io → Your Project → Settings → Environment Variables
+# Add each variable one by one:
+
+# === REQUIRED VARIABLES ===
+
+Variable Name: DATABASE_URL
+Value: [YOUR_NEON_POSTGRESQL_CONNECTION_STRING]
+
+Variable Name: OPENAI_API_KEY  
+Value: [YOUR_OPENAI_API_KEY]
+
+Variable Name: QDRANT_URL
+Value: [YOUR_QDRANT_CLOUD_URL]
+
+Variable Name: QDRANT_API_KEY
+Value: [YOUR_QDRANT_API_KEY]
+
+Variable Name: JWT_SECRET
+Value: [GENERATE_WITH_SCRIPT_ABOVE]
+
+Variable Name: HASURA_ADMIN_SECRET
+Value: [GENERATE_WITH_SCRIPT_ABOVE]
+
+Variable Name: HASURA_WEBHOOK_SECRET
+Value: [GENERATE_WITH_SCRIPT_ABOVE]
+
+# === STATIC VALUES ===
+
+Variable Name: JWT_ALGORITHM
+Value: HS256
+
+Variable Name: JWT_EXPIRATION_DAYS
+Value: 30
+
+Variable Name: DEBUG
+Value: false
+
+Variable Name: API_VERSION
+Value: 1.0.0
+
+Variable Name: FRONTEND_URL
+Value: https://physical-ai-textbook.nhost.run
+
+# === OPTIONAL OAUTH (if using GitHub/Google auth) ===
+
+Variable Name: AUTH_GITHUB_CLIENT_ID
+Value: [YOUR_GITHUB_OAUTH_CLIENT_ID]
+
+Variable Name: AUTH_GITHUB_CLIENT_SECRET
+Value: [YOUR_GITHUB_OAUTH_CLIENT_SECRET]
+
+Variable Name: AUTH_GOOGLE_CLIENT_ID
+Value: [YOUR_GOOGLE_OAUTH_CLIENT_ID]
+
+Variable Name: AUTH_GOOGLE_CLIENT_SECRET
+Value: [YOUR_GOOGLE_OAUTH_CLIENT_SECRET]
+
+# === OPTIONAL TRANSLATION ===
+
+Variable Name: GOOGLE_TRANSLATE_API_KEY
+Value: [YOUR_GOOGLE_TRANSLATE_API_KEY]
+
+# === OPTIONAL VOICE ===
+
+Variable Name: VOICE_API_BASE_URL
+Value: [YOUR_VOICE_SERVICE_URL]

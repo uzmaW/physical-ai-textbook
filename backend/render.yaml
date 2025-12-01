@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: physical-ai-backend
+    env: python
+    region: oregon
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.6
+      - key: OPENAI_API_KEY
+        scope: build,runtime
+      - key: QDRANT_URL
+        value: https://your-qdrant-cloud-url
+      - key: QDRANT_API_KEY
+        scope: runtime
+      - key: DATABASE_URL
+        scope: runtime
+      - key: FRONTEND_URL
+        value: https://your-vercel-domain.vercel.app

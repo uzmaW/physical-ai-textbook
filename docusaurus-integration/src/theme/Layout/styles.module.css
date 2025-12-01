@@ -1,0 +1,326 @@
+/**
+ * Styles for Docusaurus Book Layout
+ * Three-column layout with cover page integration
+ */
+
+/* Global scroll padding to account for sticky header */
+:global(html) {
+  scroll-padding-top: 120px;
+}
+
+.wrapper {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Book Header */
+.bookHeader {
+  background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+  border-bottom: 1px solid #e2e8f0;
+  padding: 1rem 2rem;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+[data-theme='dark'] .bookHeader {
+  background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+  border-bottom-color: #334155;
+}
+
+.headerContent {
+  max-width: 1920px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.bookLogo {
+  height: 48px;
+  width: auto;
+  border-radius: 8px;
+}
+
+.bookTitleSection {
+  flex: 1;
+}
+
+.bookTitle {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: white;
+  line-height: 1.2;
+}
+
+.bookSubtitle {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #cbd5e1;
+  line-height: 1.4;
+  margin-top: 0.25rem;
+}
+
+/* Book Container */
+.bookContainer {
+  flex: 1;
+  max-width: 1920px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+/* Three-Column Content Layout */
+.contentLayout {
+  display: grid;
+  grid-template-columns: 280px 1fr 500px;
+  min-height: calc(100vh - 100px);
+  gap: 0;
+}
+
+/* Left Sidebar - Table of Contents */
+.leftSidebar {
+  background: #f8fafc;
+  border-right: 1px solid #e2e8f0;
+  padding: 1.5rem 1rem;
+  overflow-y: auto;
+  max-height: calc(100vh - 100px);
+  position: sticky;
+  top: 100px;
+}
+
+[data-theme='dark'] .leftSidebar {
+  background: #0f172a;
+  border-right-color: #334155;
+}
+
+.tocContainer {
+  height: 100%;
+}
+
+/* Main Content */
+.mainContent {
+  background: white;
+  padding: 2rem;
+  overflow-y: auto;
+  max-height: calc(100vh - 100px);
+}
+
+[data-theme='dark'] .mainContent {
+  background: #1e293b;
+}
+
+.mainWrapper {
+  max-width: 800px;
+  margin: 0 auto;
+  line-height: 1.7;
+}
+
+/* Right Sidebar - Chat */
+.rightSidebar {
+  background: #f8fafc;
+  border-left: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 100px);
+  position: sticky;
+  top: 100px;
+}
+
+[data-theme='dark'] .rightSidebar {
+  background: #0f172a;
+  border-left-color: #334155;
+}
+
+/* Responsive Design */
+@media (max-width: 1200px) {
+  .contentLayout {
+    grid-template-columns: 250px 1fr 450px;
+  }
+}
+
+@media (max-width: 996px) {
+  .contentLayout {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr auto;
+  }
+  
+  .leftSidebar,
+  .rightSidebar {
+    position: static;
+    max-height: none;
+  }
+  
+  .leftSidebar {
+    order: 1;
+    padding: 1rem;
+    border-right: none;
+    border-bottom: 1px solid #e2e8f0;
+  }
+  
+  .mainContent {
+    order: 2;
+    padding: 1.5rem;
+    max-height: none;
+  }
+  
+  .rightSidebar {
+    order: 3;
+    border-left: none;
+    border-top: 1px solid #e2e8f0;
+    min-height: 500px;
+  }
+  
+  [data-theme='dark'] .leftSidebar {
+    border-bottom-color: #334155;
+  }
+  
+  [data-theme='dark'] .rightSidebar {
+    border-top-color: #334155;
+  }
+}
+
+@media (max-width: 768px) {
+  .bookHeader {
+    padding: 0.75rem 1rem;
+  }
+  
+  .bookTitle {
+    font-size: 1.25rem;
+  }
+  
+  .bookSubtitle {
+    font-size: 0.8rem;
+  }
+  
+  .mainContent {
+    padding: 1rem;
+  }
+  
+  .mainWrapper {
+    max-width: 100%;
+  }
+}
+
+/* Mobile Chat Overlay */
+@media (max-width: 996px) {
+  .rightSidebar.mobileOverlay {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 90%;
+    max-width: 500px;
+    z-index: 1000;
+    transform: translateX(100%);
+    transition: transform 0.3s ease-in-out;
+    border: none;
+    box-shadow: -5px 0 15px rgba(0, 0, 0, 0.2);
+  }
+  
+  .rightSidebar.mobileOverlay.open {
+    transform: translateX(0);
+  }
+}
+
+/* Book Cover Styles */
+.bookCover {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  text-align: center;
+  padding: 2rem;
+}
+
+[data-theme='dark'] .bookCover {
+  background: linear-gradient(135deg, #1a202c 0%, #2d3748 100%);
+}
+
+.coverContent {
+  max-width: 600px;
+}
+
+.coverImage {
+  max-width: 300px;
+  height: auto;
+  margin-bottom: 2rem;
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+}
+
+.coverTitle {
+  font-size: 3rem;
+  font-weight: 800;
+  margin-bottom: 1rem;
+  line-height: 1.2;
+}
+
+.coverSubtitle {
+  font-size: 1.25rem;
+  margin-bottom: 2rem;
+  opacity: 0.9;
+  line-height: 1.4;
+}
+
+.coverAuthors {
+  font-size: 1rem;
+  margin-bottom: 3rem;
+  opacity: 0.8;
+}
+
+.startReadingButton {
+  background: rgba(255, 255, 255, 0.2);
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  color: white;
+  padding: 1rem 2rem;
+  font-size: 1.1rem;
+  font-weight: 600;
+  border-radius: 50px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  backdrop-filter: blur(10px);
+}
+
+.startReadingButton:hover {
+  background: rgba(255, 255, 255, 0.3);
+  border-color: rgba(255, 255, 255, 0.5);
+  transform: translateY(-2px);
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+}
+
+/* Smooth Scrolling */
+:global(html) {
+  scroll-behavior: smooth;
+}
+
+/* Custom Scrollbars */
+.leftSidebar::-webkit-scrollbar,
+.mainContent::-webkit-scrollbar,
+.rightSidebar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.leftSidebar::-webkit-scrollbar-track,
+.mainContent::-webkit-scrollbar-track,
+.rightSidebar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.leftSidebar::-webkit-scrollbar-thumb,
+.mainContent::-webkit-scrollbar-thumb,
+.rightSidebar::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.5);
+  border-radius: 3px;
+}
+
+.leftSidebar::-webkit-scrollbar-thumb:hover,
+.mainContent::-webkit-scrollbar-thumb:hover,
+.rightSidebar::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.8);
+}

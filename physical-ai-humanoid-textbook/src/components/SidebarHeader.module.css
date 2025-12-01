@@ -1,0 +1,63 @@
+/**
+ * Sidebar Header Styles - Matching Chat UI Design
+ */
+
+.sidebarHeader {
+  padding: 1rem;
+  background: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+[data-theme='dark'] .sidebarHeader {
+  background: #111827;
+  border-bottom-color: #374151;
+}
+
+.headerContent {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.title {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #374151;
+}
+
+[data-theme='dark'] .title {
+  color: #f3f4f6;
+}
+
+.collapseButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: #6b7280;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  padding: 0;
+}
+
+[data-theme='dark'] .collapseButton {
+  color: #9ca3af;
+}
+
+.collapseButton:hover {
+  background: #e5e7eb;
+  color: #374151;
+}
+
+[data-theme='dark'] .collapseButton:hover {
+  background: #374151;
+  color: #f3f4f6;
+}

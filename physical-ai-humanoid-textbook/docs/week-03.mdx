@@ -1,0 +1,1068 @@
+---
+id: week-03
+title: ROS 2 Fundamentals
+sidebar_label: ROS 2 Fundamentals
+sidebar_position: 3
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Week 3-5: ROS 2 Fundamentals
+
+## Learning Outcomes
+
+By the end of this module, you will be able to:
+
+1. **Install** and configure ROS 2 Humble on Ubuntu 22.04
+2. **Create** nodes, topics, services, and actions in Python (rclpy) and C++ (rclcpp)
+3. **Design** robot models using URDF and visualize in RViz
+4. **Implement** inter-node communication patterns for humanoid control
+5. **Build** a multi-node humanoid teleoperation system
+6. **Debug** ROS 2 systems using command-line tools
+
+---
+
+## 3.1 ROS 2 Overview
+
+### What is ROS 2?
+
+**Robot Operating System 2** (ROS 2) is not an operating system, but a **middleware framework** for building robot applications [1]. Key improvements over ROS 1:
+
+- **Real-time support**: Deterministic communication for control loops
+- **Security**: Encryption, authentication (SROS2)
+- **Multi-robot**: Native DDS communication across networks
+- **Quality of Service (QoS)**: Configure reliability, latency, durability
+- **Cross-platform**: Linux, Windows, macOS
+
+**DDS (Data Distribution Service)**: Underlying pub/sub protocol (RTPS wire format)
+
+### ROS 2 Architecture
+
+```
+┌─────────────────────────────────────────────────────┐
+│              Application Layer                       │
+│  (Your Nodes: Python/C++/Rust)                      │
+└──────────────────┬──────────────────────────────────┘
+                   │
+┌──────────────────▼──────────────────────────────────┐
+│          ROS 2 Client Libraries                      │
+│    rclpy (Python)  │  rclcpp (C++)                   │
+└──────────────────┬──────────────────────────────────┘
+                   │
+┌──────────────────▼──────────────────────────────────┐
+│           ROS 2 Middleware (rmw)                     │
+│   DDS Implementations: Fast-DDS, Cyclone DDS        │
+└──────────────────┬──────────────────────────────────┘
+                   │
+┌──────────────────▼──────────────────────────────────┐
+│         Operating System (Linux/Windows)             │
+└─────────────────────────────────────────────────────┘
+```
+
+**Figure 3.1**: ROS 2 layered architecture. Your code interacts with client libraries (rclpy/rclcpp), which use DDS for inter-process communication.
+
+---
+
+## 3.2 Installation & Setup
+
+### System Requirements
+
+- **OS**: Ubuntu 22.04 LTS (Jammy Jellyfish)
+- **ROS 2 Distribution**: Humble Hawksbill (LTS, support until 2027)
+- **Python**: 3.10+
+- **Disk**: 10 GB free space
+
+### Installation Steps
+
+<Tabs groupId="install-method">
+<TabItem value="debian" label="Debian Packages (Recommended)" default>
+
+```bash
+# Set locale
+sudo apt update && sudo apt install locales
+sudo locale-gen en_US en_US.UTF-8
+sudo update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
+export LANG=en_US.UTF-8
+
+# Setup sources
+sudo apt install software-properties-common
+sudo add-apt-repository universe
+sudo apt update && sudo apt install curl -y
+sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+  -o /usr/share/keyrings/ros-archive-keyring.gpg
+
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" | \
+  sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null
+
+# Install ROS 2 Humble Desktop (includes RViz, demos)
+sudo apt update
+sudo apt upgrade
+sudo apt install ros-humble-desktop
+
+# Install development tools
+sudo apt install ros-dev-tools
+
+# Install additional packages for humanoid robotics
+sudo apt install \
+  ros-humble-joint-state-publisher \
+  ros-humble-robot-state-publisher \
+  ros-humble-xacro \
+  ros-humble-gazebo-ros-pkgs \
+  ros-humble-ros2-control \
+  ros-humble-ros2-controllers \
+  ros-humble-moveit \
+  ros-humble-navigation2 \
+  ros-humble-slam-toolbox
+
+# Source ROS 2
+echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc
+source ~/.bashrc
+```
+
+</TabItem>
+<TabItem value="docker" label="Docker (Cross-Platform)">
+
+```bash
+# Pull ROS 2 Humble image
+docker pull osrf/ros:humble-desktop
+
+# Run container with GUI support
+docker run -it --rm \
+  --name ros2-humble \
+  -e DISPLAY=$DISPLAY \
+  -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
+  -v ~/ros2_ws:/ros2_ws \
+  osrf/ros:humble-desktop \
+  bash
+
+# Inside container
+source /opt/ros/humble/setup.bash
+```
+
+</TabItem>
+</Tabs>
+
+### Verify Installation
+
+```bash
+# Check ROS 2 version
+ros2 --version
+# Output: ros2 cli version: 0.18.x
+
+# List available commands
+ros2 --help
+
+# Run demo nodes
+ros2 run demo_nodes_cpp talker  # Terminal 1
+ros2 run demo_nodes_py listener  # Terminal 2
+```
+
+---
+
+## 3.3 Core Concepts
+
+### Nodes
+
+A **node** is a process that performs computation. Nodes communicate via topics, services, or actions.
+
+<Tabs groupId="language">
+<TabItem value="python" label="Python (rclpy)" default>
+
+```python
+#!/usr/bin/env python3
+"""
+Minimal ROS 2 node in Python.
+Demonstrates basic node structure and logging.
+
+Author: PIAIC Humanoid AI Course
+License: MIT
+"""
+
+import rclpy
+from rclpy.node import Node
+
+
+class MinimalNode(Node):
+    """Minimal node that prints a message every second."""
+
+    def __init__(self):
+        super().__init__('minimal_node')
+
+        # Create timer (1 Hz)
+        self.timer = self.create_timer(1.0, self.timer_callback)
+        self.counter = 0
+
+        self.get_logger().info('Minimal node started!')
+
+    def timer_callback(self):
+        """Called every second."""
+        self.counter += 1
+        self.get_logger().info(f'Heartbeat {self.counter}')
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = MinimalNode()
+
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+</TabItem>
+<TabItem value="cpp" label="C++ (rclcpp)">
+
+```cpp
+#include "rclcpp/rclcpp.hpp"
+
+class MinimalNode : public rclcpp::Node {
+public:
+  MinimalNode() : Node("minimal_node"), counter_(0) {
+    // Create timer (1 Hz)
+    timer_ = this->create_wall_timer(
+      std::chrono::seconds(1),
+      std::bind(&MinimalNode::timer_callback, this)
+    );
+
+    RCLCPP_INFO(this->get_logger(), "Minimal node started!");
+  }
+
+private:
+  void timer_callback() {
+    counter_++;
+    RCLCPP_INFO(this->get_logger(), "Heartbeat %d", counter_);
+  }
+
+  rclcpp::TimerBase::SharedPtr timer_;
+  int counter_;
+};
+
+int main(int argc, char * argv[]) {
+  rclcpp::init(argc, argv);
+  rclcpp::spin(std::make_shared<MinimalNode>());
+  rclcpp::shutdown();
+  return 0;
+}
+```
+
+</TabItem>
+</Tabs>
+
+**Run the node**:
+```bash
+python3 minimal_node.py
+# Or, if installed as package:
+ros2 run my_package minimal_node
+```
+
+---
+
+### Topics (Publish/Subscribe)
+
+**Topics** enable asynchronous, many-to-many communication. Publishers send messages; subscribers receive them.
+
+**Use Case**: Sensor data (camera images, joint states), commands (velocity, position)
+
+```python
+#!/usr/bin/env python3
+"""
+Joint state publisher for humanoid robot.
+Publishes simulated joint angles for visualization in RViz.
+
+Reference: REP 103 (ROS Enhancement Proposal)
+"""
+
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import JointState
+from std_msgs.msg import Header
+import math
+
+
+class JointStatePublisher(Node):
+    """Publishes joint states for a simulated humanoid."""
+
+    def __init__(self):
+        super().__init__('joint_state_publisher')
+
+        # Publisher
+        self.publisher = self.create_publisher(
+            JointState,
+            '/joint_states',
+            10  # QoS: queue size
+        )
+
+        # Timer: 50 Hz (typical for joint states)
+        self.timer = self.create_timer(0.02, self.publish_joint_states)
+
+        # Joint names (simplified humanoid)
+        self.joint_names = [
+            'hip_pitch_left', 'knee_left', 'ankle_pitch_left',
+            'hip_pitch_right', 'knee_right', 'ankle_pitch_right',
+            'shoulder_pitch_left', 'elbow_left',
+            'shoulder_pitch_right', 'elbow_right'
+        ]
+
+        self.time = 0.0
+        self.get_logger().info('Joint State Publisher started')
+
+    def publish_joint_states(self):
+        """Publish simulated joint angles."""
+        msg = JointState()
+        msg.header = Header()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.name = self.joint_names
+
+        # Simulated sinusoidal motion (walking gait)
+        self.time += 0.02
+        msg.position = [
+            math.sin(self.time),          # Left hip
+            0.5 * abs(math.sin(self.time)),  # Left knee (always positive)
+            0.2 * math.sin(self.time),    # Left ankle
+            -math.sin(self.time),         # Right hip (opposite phase)
+            0.5 * abs(math.cos(self.time)),  # Right knee
+            -0.2 * math.sin(self.time),   # Right ankle
+            0.0, 0.0,  # Left arm (stationary)
+            0.0, 0.0   # Right arm
+        ]
+
+        # Velocities (derivative of position)
+        msg.velocity = [
+            math.cos(self.time),
+            0.5 * math.cos(self.time) * (1 if math.sin(self.time) > 0 else -1),
+            0.2 * math.cos(self.time),
+            -math.cos(self.time),
+            -0.5 * math.sin(self.time) * (1 if math.cos(self.time) > 0 else -1),
+            -0.2 * math.cos(self.time),
+            0.0, 0.0, 0.0, 0.0
+        ]
+
+        # Effort (torques) - simulated
+        msg.effort = [10.0] * len(self.joint_names)
+
+        self.publisher.publish(msg)
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = JointStatePublisher()
+
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+**Visualize in RViz**:
+```bash
+# Terminal 1: Publish joint states
+python3 joint_state_publisher.py
+
+# Terminal 2: Visualize
+ros2 run rviz2 rviz2
+# Add RobotModel display, set Fixed Frame to "base_link"
+```
+
+---
+
+### Services (Request/Response)
+
+**Services** provide synchronous, one-to-one communication. A client sends a request; a server returns a response.
+
+**Use Case**: Trigger actions (reset robot, compute IK), query state
+
+```python
+#!/usr/bin/env python3
+"""
+Service example: Inverse kinematics solver.
+Client sends target pose; server returns joint angles.
+"""
+
+import rclpy
+from rclpy.node import Node
+from example_interfaces.srv import AddTwoInts  # Using built-in for demo
+import numpy as np
+
+
+class IKService(Node):
+    """Inverse kinematics service (simplified 2D)."""
+
+    def __init__(self):
+        super().__init__('ik_service')
+
+        # Create service
+        self.srv = self.create_service(
+            AddTwoInts,  # Replace with custom IK message type
+            'compute_ik',
+            self.ik_callback
+        )
+
+        self.get_logger().info('IK Service ready')
+
+    def ik_callback(self, request, response):
+        """
+        Compute inverse kinematics.
+
+        For demo: using AddTwoInts (a + b).
+        Real implementation: custom srv with Pose -> JointAngles
+        """
+        # Placeholder: Geometric IK for 2-link arm
+        target_x = request.a
+        target_y = request.b
+
+        # Simplified IK (actual would use DH parameters, Jacobian, etc.)
+        theta1 = np.arctan2(target_y, target_x)
+        theta2 = 0.0  # Placeholder
+
+        # In real service, return JointAngles msg
+        response.sum = int(theta1 * 100)  # Hack for demo
+
+        self.get_logger().info(
+            f'IK request: target=({target_x}, {target_y}) -> '
+            f'theta1={theta1:.2f} rad'
+        )
+
+        return response
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = IKService()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+**Call the service**:
+```bash
+# Start service
+python3 ik_service.py
+
+# Call from command line
+ros2 service call /compute_ik example_interfaces/srv/AddTwoInts "{a: 10, b: 20}"
+```
+
+---
+
+### Actions (Goal-Based)
+
+**Actions** provide asynchronous, goal-based communication with feedback. Useful for long-running tasks.
+
+**Use Case**: Navigate to pose, follow trajectory, grasp object
+
+```python
+#!/usr/bin/env python3
+"""
+Action server example: Reach target pose.
+Provides feedback on progress and final result.
+"""
+
+import rclpy
+from rclpy.action import ActionServer
+from rclpy.node import Node
+from control_msgs.action import FollowJointTrajectory
+import time
+
+
+class ReachPoseActionServer(Node):
+    """Action server for reaching a target pose."""
+
+    def __init__(self):
+        super().__init__('reach_pose_action_server')
+
+        # Create action server
+        self._action_server = ActionServer(
+            self,
+            FollowJointTrajectory,
+            'reach_pose',
+            self.execute_callback
+        )
+
+        self.get_logger().info('Action server ready')
+
+    def execute_callback(self, goal_handle):
+        """Execute the reach pose action."""
+        self.get_logger().info('Executing reach pose...')
+
+        # Simulate trajectory execution
+        feedback_msg = FollowJointTrajectory.Feedback()
+
+        for i in range(10):
+            if goal_handle.is_cancel_requested:
+                goal_handle.canceled()
+                self.get_logger().info('Action canceled')
+                return FollowJointTrajectory.Result()
+
+            # Publish feedback (progress)
+            feedback_msg.actual.time_from_start.sec = i
+            goal_handle.publish_feedback(feedback_msg)
+
+            self.get_logger().info(f'Progress: {i * 10}%')
+            time.sleep(0.5)
+
+        # Success
+        goal_handle.succeed()
+        result = FollowJointTrajectory.Result()
+        result.error_code = 0  # Success
+
+        self.get_logger().info('Action succeeded!')
+        return result
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = ReachPoseActionServer()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+---
+
+## 3.4 URDF: Robot Modeling
+
+### What is URDF?
+
+**Unified Robot Description Format** (URDF) is an XML format for describing robot kinematics, dynamics, and visual properties [2].
+
+**Components**:
+- **Links**: Rigid bodies (torso, thigh, shin, foot)
+- **Joints**: Connections between links (revolute, prismatic, fixed)
+- **Visual**: Appearance (meshes, colors)
+- **Collision**: Simplified geometry for collision detection
+- **Inertial**: Mass, center of mass, inertia tensor
+
+### Simple Humanoid URDF
+
+```xml
+<?xml version="1.0"?>
+<!--
+Simplified humanoid robot URDF.
+Demonstrates link/joint structure for a bipedal robot.
+
+Author: PIAIC Humanoid AI Course
+-->
+<robot name="simple_humanoid">
+
+  <!-- Base link (torso) -->
+  <link name="torso">
+    <visual>
+      <geometry>
+        <box size="0.3 0.2 0.5"/>
+      </geometry>
+      <material name="blue">
+        <color rgba="0.2 0.4 0.8 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <box size="0.3 0.2 0.5"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="10.0"/>
+      <inertia ixx="0.5" ixy="0.0" ixz="0.0"
+               iyy="0.5" iyz="0.0" izz="0.3"/>
+    </inertial>
+  </link>
+
+  <!-- Left thigh -->
+  <link name="left_thigh">
+    <visual>
+      <geometry>
+        <cylinder radius="0.05" length="0.4"/>
+      </geometry>
+      <origin xyz="0 0 -0.2"/>
+      <material name="grey">
+        <color rgba="0.5 0.5 0.5 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder radius="0.05" length="0.4"/>
+      </geometry>
+      <origin xyz="0 0 -0.2"/>
+    </collision>
+    <inertial>
+      <mass value="2.0"/>
+      <origin xyz="0 0 -0.2"/>
+      <inertia ixx="0.02" ixy="0.0" ixz="0.0"
+               iyy="0.02" iyz="0.0" izz="0.001"/>
+    </inertial>
+  </link>
+
+  <!-- Hip joint (revolute) -->
+  <joint name="left_hip_pitch" type="revolute">
+    <parent link="torso"/>
+    <child link="left_thigh"/>
+    <origin xyz="0 0.1 -0.25" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>  <!-- Pitch axis -->
+    <limit lower="-1.57" upper="1.57" effort="100" velocity="2.0"/>
+  </joint>
+
+  <!-- Left shin -->
+  <link name="left_shin">
+    <visual>
+      <geometry>
+        <cylinder radius="0.04" length="0.4"/>
+      </geometry>
+      <origin xyz="0 0 -0.2"/>
+      <material name="grey"/>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder radius="0.04" length="0.4"/>
+      </geometry>
+      <origin xyz="0 0 -0.2"/>
+    </collision>
+    <inertial>
+      <mass value="1.5"/>
+      <origin xyz="0 0 -0.2"/>
+      <inertia ixx="0.015" ixy="0.0" ixz="0.0"
+               iyy="0.015" iyz="0.0" izz="0.001"/>
+    </inertial>
+  </link>
+
+  <!-- Knee joint -->
+  <joint name="left_knee" type="revolute">
+    <parent link="left_thigh"/>
+    <child link="left_shin"/>
+    <origin xyz="0 0 -0.4" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="0" upper="2.356" effort="80" velocity="2.0"/>  <!-- 0-135 deg -->
+  </joint>
+
+  <!-- Repeat for right leg, arms, head... -->
+
+</robot>
+```
+
+### Using xacro (Macros for URDF)
+
+**xacro** allows parameterized, modular URDF files [3].
+
+```xml
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="humanoid">
+
+  <!-- Parameters -->
+  <xacro:property name="thigh_length" value="0.4"/>
+  <xacro:property name="shin_length" value="0.4"/>
+  <xacro:property name="thigh_mass" value="2.0"/>
+
+  <!-- Macro for leg -->
+  <xacro:macro name="leg" params="prefix reflect">
+    <link name="${prefix}_thigh">
+      <visual>
+        <geometry>
+          <cylinder radius="0.05" length="${thigh_length}"/>
+        </geometry>
+        <origin xyz="0 0 ${-thigh_length/2}"/>
+        <material name="grey">
+          <color rgba="0.5 0.5 0.5 1.0"/>
+        </material>
+      </visual>
+      <inertial>
+        <mass value="${thigh_mass}"/>
+        <origin xyz="0 0 ${-thigh_length/2}"/>
+        <inertia ixx="0.02" ixy="0.0" ixz="0.0"
+                 iyy="0.02" iyz="0.0" izz="0.001"/>
+      </inertial>
+    </link>
+
+    <joint name="${prefix}_hip_pitch" type="revolute">
+      <parent link="torso"/>
+      <child link="${prefix}_thigh"/>
+      <origin xyz="0 ${reflect*0.1} -0.25"/>
+      <axis xyz="0 1 0"/>
+      <limit lower="-1.57" upper="1.57" effort="100" velocity="2.0"/>
+    </joint>
+
+    <!-- Continue with shin, foot... -->
+  </xacro:macro>
+
+  <!-- Instantiate left and right legs -->
+  <xacro:leg prefix="left" reflect="1"/>
+  <xacro:leg prefix="right" reflect="-1"/>
+
+</robot>
+```
+
+**Convert xacro to URDF**:
+```bash
+xacro humanoid.urdf.xacro > humanoid.urdf
+```
+
+---
+
+## 3.5 RViz Visualization
+
+### Launch RViz with Robot Model
+
+```bash
+# Start robot_state_publisher (reads URDF, publishes TF transforms)
+ros2 run robot_state_publisher robot_state_publisher \
+  --ros-args -p robot_description:="$(xacro /path/to/humanoid.urdf.xacro)"
+
+# Start joint_state_publisher_gui (manual joint control)
+ros2 run joint_state_publisher_gui joint_state_publisher_gui
+
+# Launch RViz
+ros2 run rviz2 rviz2
+```
+
+**In RViz**:
+1. Set `Fixed Frame` to `torso` (or `base_link`)
+2. Add `RobotModel` display
+3. Move joints with GUI sliders → observe robot motion
+
+---
+
+## 3.6 Communication Patterns
+
+### Pattern 1: Sensor → Controller → Actuator
+
+```
+[Camera Node] --/image--> [Object Detector] --/objects--> [Planner] --/cmd--> [Controller]
+```
+
+### Pattern 2: Teleoperation
+
+```
+[Keyboard Input] --/cmd_vel--> [Navigation] --/joint_trajectory--> [Hardware Interface]
+```
+
+### Pattern 3: Perception-Action Loop
+
+```
+[Sensors] --/state--> [State Estimator] --/odometry--> [SLAM]
+                                            |
+[Controller] <--/plan-- [Motion Planner] <--/map--
+```
+
+---
+
+## 3.7 Lab: Humanoid Teleoperation System
+
+### Objective
+Build a multi-node system for teleoperating a humanoid robot:
+- Keyboard input → velocity commands
+- Velocity → joint trajectories
+- Publish joint states → visualize in RViz
+
+### Architecture
+
+```
+[teleop_keyboard] --/cmd_vel--> [velocity_to_joints] --/joint_commands--> [joint_state_publisher] --/joint_states--> [RViz]
+```
+
+### Node 1: Keyboard Teleoperation
+
+```python
+#!/usr/bin/env python3
+import rclpy
+from rclpy.node import Node
+from geometry_msgs.msg import Twist
+import sys
+import tty
+import termios
+
+
+class TeleopKeyboard(Node):
+    """Keyboard teleoperation for humanoid robot."""
+
+    def __init__(self):
+        super().__init__('teleop_keyboard')
+        self.publisher = self.create_publisher(Twist, '/cmd_vel', 10)
+
+        self.get_logger().info('Teleoperation started. Use WASD keys.')
+        self.get_logger().info('W: forward, S: backward, A: left, D: right, Q: quit')
+
+    def get_key(self):
+        """Read a single keypress."""
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setraw(sys.stdin.fileno())
+            key = sys.stdin.read(1)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        return key
+
+    def run(self):
+        """Main loop."""
+        while rclpy.ok():
+            key = self.get_key()
+
+            msg = Twist()
+
+            if key == 'w':
+                msg.linear.x = 0.5  # Forward
+            elif key == 's':
+                msg.linear.x = -0.5  # Backward
+            elif key == 'a':
+                msg.angular.z = 0.5  # Turn left
+            elif key == 'd':
+                msg.angular.z = -0.5  # Turn right
+            elif key == 'q':
+                break
+
+            self.publisher.publish(msg)
+            self.get_logger().info(f'Published: linear={msg.linear.x}, angular={msg.angular.z}')
+
+
+def main():
+    rclpy.init()
+    node = TeleopKeyboard()
+
+    try:
+        node.run()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+### Node 2: Velocity to Joint Commands
+
+```python
+#!/usr/bin/env python3
+import rclpy
+from rclpy.node import Node
+from geometry_msgs.msg import Twist
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+import math
+
+
+class VelocityToJoints(Node):
+    """Convert velocity commands to joint trajectories."""
+
+    def __init__(self):
+        super().__init__('velocity_to_joints')
+
+        self.subscription = self.create_subscription(
+            Twist,
+            '/cmd_vel',
+            self.cmd_vel_callback,
+            10
+        )
+
+        self.publisher = self.create_publisher(
+            JointTrajectory,
+            '/joint_commands',
+            10
+        )
+
+        self.joint_names = [
+            'left_hip_pitch', 'left_knee', 'left_ankle',
+            'right_hip_pitch', 'right_knee', 'right_ankle'
+        ]
+
+        self.get_logger().info('Velocity to joints converter ready')
+
+    def cmd_vel_callback(self, msg):
+        """Convert Twist to joint trajectory."""
+        linear_vel = msg.linear.x
+        angular_vel = msg.angular.z
+
+        # Simple gait: map velocity to joint amplitudes
+        trajectory = JointTrajectory()
+        trajectory.joint_names = self.joint_names
+
+        point = JointTrajectoryPoint()
+        point.positions = [
+            0.3 * linear_vel,  # Left hip
+            0.5 * abs(linear_vel),  # Left knee
+            0.1 * linear_vel,  # Left ankle
+            -0.3 * linear_vel,  # Right hip (opposite)
+            0.5 * abs(linear_vel),  # Right knee
+            -0.1 * linear_vel  # Right ankle
+        ]
+        point.time_from_start.sec = 0
+        point.time_from_start.nanosec = 500_000_000  # 0.5s
+
+        trajectory.points = [point]
+
+        self.publisher.publish(trajectory)
+
+
+def main():
+    rclpy.init()
+    node = VelocityToJoints()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+### Run the System
+
+```bash
+# Terminal 1: Keyboard teleoperation
+python3 teleop_keyboard.py
+
+# Terminal 2: Velocity converter
+python3 velocity_to_joints.py
+
+# Terminal 3: Joint state publisher (from earlier)
+python3 joint_state_publisher.py
+
+# Terminal 4: RViz visualization
+ros2 run rviz2 rviz2
+```
+
+---
+
+## 3.8 Debugging Tools
+
+### Command-Line Tools
+
+```bash
+# List all nodes
+ros2 node list
+
+# Get node info
+ros2 node info /joint_state_publisher
+
+# List topics
+ros2 topic list
+
+# Echo topic messages
+ros2 topic echo /joint_states
+
+# Get topic info (publishers, subscribers, message type)
+ros2 topic info /joint_states
+
+# Publish to topic (manual)
+ros2 topic pub /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.5}}"
+
+# List services
+ros2 service list
+
+# Call service
+ros2 service call /compute_ik example_interfaces/srv/AddTwoInts "{a: 10, b: 20}"
+
+# Record bag file (all topics)
+ros2 bag record -a
+
+# Play bag file
+ros2 bag play my_bag.db3
+
+# Node graph visualization
+rqt_graph
+```
+
+### Common Issues
+
+**Issue 1**: "No node named..."
+- **Solution**: Ensure node is running, check node name (case-sensitive)
+
+**Issue 2**: "No publishers/subscribers on topic"
+- **Solution**: Check topic name (`ros2 topic list`), verify message types match
+
+**Issue 3**: DDS_SECURITY_AUTHENTICATION_FAILED
+- **Solution**: Disable security for development: `export ROS_SECURITY_ENABLE=false`
+
+---
+
+## Exercises
+
+### Basic (40%)
+1. **Install** ROS 2 Humble and verify with demo nodes. Take a screenshot showing talker/listener communication.
+
+2. **Create** a simple publisher node that publishes `std_msgs/String` messages with your name at 1 Hz.
+
+3. **Modify** the URDF example to add a head link (cylinder, 0.15m radius, 0.2m height) attached to the torso via a `head_yaw` revolute joint (limits: ±90 degrees).
+
+### Intermediate (40%)
+4. **Implement** a service that computes the sum of squares: given two integers `a` and `b`, return `a² + b²`. Create custom service definition.
+
+5. **Build** a 2-node system:
+   - Node 1: Publishes random numbers (0-100) at 10 Hz
+   - Node 2: Subscribes, computes running average, publishes on `/average` topic
+
+6. **Design** a full humanoid URDF (torso, 2 legs with 3 DOF each, 2 arms with 2 DOF each, head). Use xacro macros for symmetry. Visualize in RViz.
+
+### Advanced (20%)
+7. **Create** an action server for a "walk to pose" action. Include:
+   - Goal: Target (x, y, theta)
+   - Feedback: Current pose, distance remaining
+   - Result: Final pose, time taken
+
+8. **Implement** QoS profiles: Create two publishers on `/sensor_data` topic. Publisher 1 uses BEST_EFFORT (unreliable), Publisher 2 uses RELIABLE. Subscriber logs packet loss.
+
+9. **Capstone Prep**: Design the ROS 2 architecture for your Week 13 project. Draw a node graph showing:
+   - Speech input node
+   - LLM planning node
+   - Navigation node
+   - Manipulation node
+   - Specify message types and communication patterns
+
+---
+
+## Further Reading
+
+- **ROS 2 Documentation**: https://docs.ros.org/en/humble/
+- **URDF Tutorials**: http://wiki.ros.org/urdf/Tutorials
+- **REP 103**: Standard Units of Measure and Coordinate Conventions
+- **Programming Robots with ROS** (O'Reilly, 2015) - Still relevant for concepts
+
+---
+
+## Summary
+
+- **ROS 2 Humble** is a modern middleware for robotics with real-time, security, and multi-robot support
+- **Nodes** communicate via **topics** (pub/sub), **services** (req/rep), and **actions** (goals with feedback)
+- **URDF** describes robot kinematics, dynamics, and visual properties
+- **xacro** enables modular, parameterized robot descriptions
+- **RViz** visualizes robots and sensor data in real-time
+- **rclpy** (Python) and **rclcpp** (C++) are client libraries for writing nodes
+- Multi-node systems enable modular, distributed robot control architectures
+
+**Next**: [Week 6-7: Gazebo & Unity Simulation](./week-06)
+
+---
+
+## References
+
+[1] S. Macenski et al., "Robot Operating System 2: Design, Architecture, and Uses," *Science Robotics*, vol. 7, no. 66, 2022. DOI: 10.1126/scirobotics.abm6074
+
+[2] ROS Wiki, "URDF - Unified Robot Description Format," http://wiki.ros.org/urdf
+
+[3] ROS Wiki, "xacro - XML Macros," http://wiki.ros.org/xacro
+
+---
+
+

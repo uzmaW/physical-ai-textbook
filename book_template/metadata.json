@@ -1,0 +1,5 @@
+{
+  "name": "DocuChat",
+  "description": "A Docusaurus-inspired documentation viewer with an integrated AI chat assistant on the right sidebar.",
+  "requestFramePermissions": []
+}

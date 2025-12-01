@@ -1,0 +1,700 @@
+/**
+ * Custom styles for Physical AI & Humanoid Robotics Textbook
+ * Implements 3-column layout: Sidebar | Content | RAG Chat
+ */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --ifm-color-primary: #1e40af;
+  --ifm-color-primary-dark: #1e3a8a;
+  --ifm-color-primary-darker: #1e3a8a;
+  --ifm-color-primary-darkest: #1e3a8a;
+  --ifm-color-primary-light: #3b82f6;
+  --ifm-color-primary-lighter: #60a5fa;
+  --ifm-color-primary-lightest: #93c5fd;
+  --ifm-code-font-size: 95%;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.1);
+  --ifm-navbar-height: 0px;
+  --ifm-footer-padding-vertical: 0px;
+}
+
+[data-theme='dark'] {
+  --ifm-color-primary: #60a5fa;
+  --ifm-color-primary-dark: #3b82f6;
+  --ifm-color-primary-darker: #2563eb;
+  --ifm-color-primary-darkest: #1d4ed8;
+  --ifm-color-primary-light: #93c5fd;
+  --ifm-color-primary-lighter: #bfdbfe;
+  --ifm-color-primary-lightest: #dbeafe;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
+}
+
+/* Hide default navbar and footer */
+nav.navbar {
+  display: none !important;
+}
+
+footer.footer {
+  display: none !important;
+}
+
+/* Hide default table of contents */
+.theme-doc-toc-desktop {
+  display: block !important;
+}
+
+.table-of-contents {
+  display: none !important;
+}
+
+/* SIMPLE LAYOUT: Force desktop 3-column layout */
+@media (min-width: 997px) {
+  /* Force flexbox on the row */
+  .container .row,
+  main .container .row {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    margin: 0 !important;
+    width: 100% !important;
+    justify-content: flex-start !important;
+    gap: 0 !important;
+  }
+  
+  /* Left sidebar: 280px fixed */
+  .container .row > aside:first-child,
+  .container .row > div:first-child,
+  [class*="docSidebarContainer"] {
+    flex: 0 0 280px !important;
+    max-width: 280px !important;
+    min-width: 280px !important;
+  }
+  
+  /* Main content: flexible but constrained */
+  .container .row > div[class*="docItemCol"],
+  .container .row > div:nth-child(2):not(aside) {
+    flex: 1 1 auto !important;
+    max-width: 695px !important;
+    min-width: 370px !important;
+    width: auto !important;
+  }
+  
+  /* Right TOC/Chat: 370px fixed, no spacing */
+  .container .row > aside:last-child,
+  .container .row > div:last-child,
+  aside.theme-doc-toc-desktop,
+  .col.col--3 {
+    flex: 0 0 370px !important;
+    max-width: 370px !important;
+    min-width: 370px !important;
+    display: block !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+}
+
+/* Ensure our RAG chatbox is visible and takes full width */
+.theme-doc-toc-desktop {
+  width: 100% !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  flex: 1 1 auto !important;
+}
+
+.theme-doc-toc-desktop > div {
+  height: 100vh;
+  width: 100% !important;
+  max-width: none !important;
+  position: sticky;
+  top: 0;
+  display: flex !important;
+  flex-direction: column !important;
+}
+
+/* Ensure TOC container in Docusaurus layout has proper width */
+[class*="tocCollapsible"],
+[class*="tableOfContents"],
+.col--3 {
+  width: 100% !important;
+  max-width: none !important;
+  min-width: 0 !important;
+}
+
+/* Override Docusaurus default TOC width */
+.col.col--3 {
+  --ifm-col-width: 100% !important;
+  flex: 0 0 auto !important;
+  width: 100% !important;
+}
+
+/* Ensure main doc wrapper doesn't constrain TOC */
+.docMainContainer_node_modules-\@docusaurus-theme-classic-lib-theme-DocPage-Layout-styles-module,
+[class*="docMainContainer"] {
+  max-width: none !important;
+}
+
+/* Force chat container to take full available width */
+.theme-doc-toc-desktop * {
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+/* Additional width fixes for chat */
+div[class*="ChatUI"],
+div[class*="chatContainer"],
+div[class*="RAGChat"] {
+  width: 100% !important;
+  max-width: none !important;
+  min-width: 0 !important;
+}
+
+/* Ensure all nested elements respect width */
+.theme-doc-toc-desktop div,
+.theme-doc-toc-desktop section,
+.theme-doc-toc-desktop article {
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+/* Override Docusaurus layout constraints */
+.container {
+  max-width: 100% !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+.row {
+  margin: 0 !important;
+  padding: 0 !important;
+  display: flex !important;
+  flex-wrap: nowrap !important;
+  width: 100% !important;
+}
+
+.col {
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+/* Specific column targeting */
+.container .row .col {
+  display: block !important;
+}
+
+/* Ensure proper ordering and no gaps */
+.container .row {
+  align-items: stretch !important;
+  justify-content: flex-start !important;
+  gap: 0 !important;
+}
+
+/* Remove any default Docusaurus spacing */
+main {
+  padding: 0 !important;
+}
+
+main > .container {
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+/* Specific fix for TOC column */
+.docPage__5DB3 .col--3,
+[class*="docPage"] .col--3 {
+  width: 100% !important;
+  max-width: none !important;
+  flex: 0 0 auto !important;
+}
+
+/* Force 3-column layout - Sidebar | Content | Chat */
+[class*="docPage"],
+.docPage,
+div[class*="docMainContainer"] > .container > .row {
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: nowrap !important;
+  max-width: 100vw !important;
+}
+
+/* Left sidebar column - 280px */
+[class*="docSidebarContainer"],
+.theme-doc-sidebar-container,
+.col--3:first-child {
+  flex: 0 0 280px !important;
+  max-width: 280px !important;
+  min-width: 280px !important;
+}
+
+/* Main content column - flexible */
+[class*="docItemCol"],
+.col:not(.col--3) {
+  flex: 1 1 auto !important;
+  max-width: none !important;
+  min-width: 400px !important;
+  margin: 0 !important;
+  padding: 2rem !important;
+}
+
+/* Right TOC/Chat column - 340px like Gmail */
+.col--3:last-child,
+.theme-doc-toc-desktop {
+  flex: 0 0 340px !important;
+  max-width: 340px !important;
+  min-width: 340px !important;
+  display: block !important;
+}
+
+/* Ensure TOC/Chat is always visible on the right */
+.theme-doc-toc-desktop {
+  display: block !important;
+  position: sticky !important;
+  top: 0 !important;
+  height: 100vh !important;
+}
+
+aside.theme-doc-toc-desktop {
+  display: block !important;
+}
+
+/* Override any hiding */
+@media (min-width: 997px) {
+  .theme-doc-toc-desktop,
+  aside.theme-doc-toc-desktop,
+  .col.col--3 {
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+  }
+}
+
+/* Hide mobile TOC */
+.theme-doc-toc-mobile {
+  display: none !important;
+}
+
+/* Adjust when sidebar is collapsed */
+body.sidebar-collapsed [class*="docSidebarContainer"],
+body.sidebar-collapsed .theme-doc-sidebar-container {
+  display: none !important;
+}
+
+body.sidebar-collapsed [class*="docItemCol"],
+body.sidebar-collapsed .col:not(.col--3) {
+  margin-left: 0 !important;
+  flex: 1 1 0 !important;
+  max-width: calc(100% - 370px) !important;
+}
+
+/* Fix scroll jump issue */
+html {
+  scroll-padding-top: 0;
+  scroll-behavior: smooth;
+}
+
+/* Prevent scroll jump on navigation */
+.theme-doc-markdown {
+  scroll-margin-top: 0;
+}
+
+/* Anchor links scroll to exact position */
+[id] {
+  scroll-margin-top: 1rem;
+}
+
+/* Chatbox animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.rag-message {
+  animation: fadeIn 0.3s ease-out;
+}
+
+/* Custom 3-column layout - Let Docusaurus handle the layout */
+
+/* Left sidebar - Chapter navigation */
+.theme-doc-sidebar-container,
+[class*="docSidebarContainer"] {
+  transition: all 0.3s ease;
+}
+
+body.sidebar-collapsed .theme-doc-sidebar-container,
+body.sidebar-collapsed [class*="docSidebarContainer"] {
+  display: none !important;
+}
+
+/* Sidebar collapse handled by SidebarHeader component */
+
+/* Expand button when sidebar is collapsed */
+body.sidebar-collapsed::before {
+  content: '';
+  position: fixed;
+  top: 1rem;
+  left: 1rem;
+  width: 40px;
+  height: 40px;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  cursor: pointer;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  transition: all 0.2s ease;
+}
+
+[data-theme='dark'] body.sidebar-collapsed::before {
+  background: #111827;
+  border-color: #374151;
+}
+
+.expandSidebarButton {
+  position: fixed;
+  top: 1rem;
+  left: 1rem;
+  width: 40px;
+  height: 40px;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  cursor: pointer;
+  z-index: 1000;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  transition: all 0.2s ease;
+  color: #6b7280;
+}
+
+[data-theme='dark'] .expandSidebarButton {
+  background: #111827;
+  border-color: #374151;
+  color: #9ca3af;
+}
+
+body.sidebar-collapsed .expandSidebarButton {
+  display: flex;
+}
+
+.expandSidebarButton:hover {
+  background: #e5e7eb;
+  color: #374151;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+[data-theme='dark'] .expandSidebarButton:hover {
+  background: #374151;
+  color: #f3f4f6;
+}
+
+/* Main content area - Let Docusaurus handle the layout */
+
+/* Right sidebar - RAG Chatbox - Let Docusaurus handle the layout */
+
+/* Copyright line at bottom of content */
+.content-copyright {
+  margin-top: 4rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--ifm-toc-border-color);
+  text-align: center;
+  font-size: 0.875rem;
+  color: var(--ifm-color-content-secondary);
+}
+
+/* Urdu text styling */
+.urdu-text {
+  font-family: 'Noto Nastaliq Urdu', serif;
+  font-size: 1.25em;
+  line-height: 2;
+  direction: rtl;
+  text-align: right;
+}
+
+/* Translate button with Urdu font */
+.translate-btn {
+  font-family: 'Noto Nastaliq Urdu', serif !important;
+}
+
+/* Code blocks */
+.prism-code {
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+
+/* Responsive design */
+/* Responsive breakpoints */
+@media (min-width: 997px) {
+  /* Desktop: Always show 3-column layout */
+  [class*="docPage"],
+  div[class*="docMainContainer"] > .container > .row {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+  }
+  
+  .theme-doc-toc-desktop {
+    display: block !important;
+  }
+  
+  /* Force layout widths */
+  [class*="docSidebarContainer"] {
+    flex: 0 0 280px !important;
+  }
+  
+  [class*="docItemCol"] {
+    flex: 0 0 70% !important;
+    max-width: 70% !important;
+  }
+  
+  .col--3:last-child {
+    flex: 0 0 340px !important;
+  }
+}
+
+@media (max-width: 1400px) and (min-width: 997px) {
+  /* Smaller desktop: flexible content */
+  [class*="docItemCol"] {
+    flex: 1 1 auto !important;
+    max-width: none !important;
+  }
+}
+
+@media (max-width: 1200px) and (min-width: 997px) {
+  /* Tablet: Reduce sidebar and chat */
+  [class*="docSidebarContainer"] {
+    flex: 0 0 240px !important;
+    max-width: 240px !important;
+    min-width: 240px !important;
+  }
+  
+  [class*="docItemCol"] {
+    flex: 1 1 auto !important;
+    max-width: none !important;
+  }
+  
+  .col--3:last-child {
+    flex: 0 0 300px !important;
+    max-width: 300px !important;
+    min-width: 300px !important;
+  }
+}
+
+@media (max-width: 996px) {
+  /* Mobile: Stack vertically */
+  [class*="docPage"],
+  div[class*="docMainContainer"] > .container > .row {
+    flex-direction: column !important;
+    flex-wrap: wrap !important;
+  }
+  
+  [class*="docSidebarContainer"],
+  [class*="docItemCol"],
+  .col--3 {
+    flex: 1 1 auto !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+  }
+  
+  .theme-doc-toc-desktop {
+    position: relative !important;
+    height: auto !important;
+    min-height: 500px !important;
+  }
+  
+  .expandSidebarButton {
+    z-index: 1001;
+  }
+}
+
+/* Custom scrollbar */
+.docs-sidebar::-webkit-scrollbar,
+.rag-chatbox::-webkit-scrollbar {
+  width: 6px;
+}
+
+.docs-sidebar::-webkit-scrollbar-track,
+.rag-chatbox::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.docs-sidebar::-webkit-scrollbar-thumb,
+.rag-chatbox::-webkit-scrollbar-thumb {
+  background: var(--ifm-color-emphasis-300);
+  border-radius: 3px;
+}
+
+.docs-sidebar::-webkit-scrollbar-thumb:hover,
+.rag-chatbox::-webkit-scrollbar-thumb:hover {
+  background: var(--ifm-color-emphasis-400);
+}
+
+/* Math equations */
+.katex {
+  font-size: 1.1em;
+}
+
+/* Tables */
+table {
+  display: table;
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.5rem 0;
+}
+
+table th,
+table td {
+  border: 1px solid var(--ifm-toc-border-color);
+  padding: 0.75rem;
+}
+
+/* Diagrams and figures */
+figure {
+  margin: 2rem 0;
+  text-align: center;
+}
+
+figcaption {
+  margin-top: 0.5rem;
+  font-style: italic;
+  color: var(--ifm-color-content-secondary);
+}
+
+/* Learning outcomes box */
+.learning-outcomes {
+  background: var(--ifm-alert-background-color);
+  border-left: 4px solid var(--ifm-color-primary);
+  padding: 1rem 1.5rem;
+  margin: 2rem 0;
+  border-radius: 4px;
+}
+
+.learning-outcomes h3 {
+  margin-top: 0;
+  color: var(--ifm-color-primary);
+}
+
+/* Code lab sections */
+.code-lab {
+  background: var(--ifm-code-background);
+  border-radius: 8px;
+  padding: 1.5rem;
+  margin: 2rem 0;
+}
+
+.code-lab h3 {
+  margin-top: 0;
+  color: var(--ifm-color-primary);
+}
+
+/* Copyright notice after pagination */
+.pagination-nav {
+  position: relative;
+  margin-bottom: 5rem;
+}
+
+.pagination-nav::after {
+  content: "© 2025 PIAIC. Licensed under CC BY-SA 4.0.";
+  position: absolute;
+  bottom: -4rem;
+  left: 0;
+  right: 0;
+  text-align: center;
+  padding: 1rem 0;
+  font-size: 0.85rem;
+  color: var(--ifm-color-emphasis-600);
+  border-top: 1px solid var(--ifm-toc-border-color);
+}
+
+/* Citation links */
+.citation {
+  color: var(--ifm-color-primary);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.citation:hover {
+  text-decoration: underline;
+}
+
+/* Cover page specific styles */
+.cover-page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  max-height: 100vh;
+  overflow: hidden;
+  text-align: center;
+  background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
+  color: white;
+  padding: 2rem;
+}
+
+.cover-logo {
+  width: 150px;
+  height: 150px;
+  margin-bottom: 1.5rem;
+  flex-shrink: 0;
+}
+
+.cover-title {
+  font-size: clamp(2rem, 5vw, 3.5rem);
+  font-weight: 700;
+  margin-bottom: 0.75rem;
+  line-height: 1.2;
+}
+
+.cover-subtitle {
+  font-size: clamp(1rem, 3vw, 1.5rem);
+  font-weight: 400;
+  margin-bottom: 2rem;
+  opacity: 0.95;
+}
+
+.cover-meta {
+  font-size: clamp(0.9rem, 2vw, 1.1rem);
+  opacity: 0.9;
+  margin-bottom: 2rem;
+}
+
+.cover-meta p {
+  margin: 0.5rem 0;
+}
+
+.cover-cta {
+  background: white;
+  color: #1e40af;
+  padding: 0.875rem 2rem;
+  font-size: clamp(1rem, 2.5vw, 1.2rem);
+  font-weight: 600;
+  border-radius: 8px;
+  text-decoration: none;
+  transition: transform 0.2s, box-shadow 0.2s;
+  display: inline-block;
+  margin-bottom: 2rem;
+}
+
+.cover-cta:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+  color: #1e40af;
+}
+
+.cover-page > div:last-child {
+  margin-top: auto;
+  font-size: clamp(0.75rem, 1.5vw, 0.875rem);
+  opacity: 0.75;
+}
+
+.cover-page > div:last-child p {
+  margin: 0.25rem 0;
+}
+
+/* PersonalizedChapter styles are in PersonalizedChapter.module.css */

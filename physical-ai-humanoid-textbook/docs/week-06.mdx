@@ -1,0 +1,1047 @@
+---
+id: week-06
+title: Gazebo & Unity Simulation
+sidebar_label: Gazebo & Unity Simulation
+sidebar_position: 6
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Week 6-7: Gazebo & Unity Simulation
+
+## Learning Outcomes
+
+By the end of this module, you will be able to:
+
+1. **Set up** Gazebo Classic 11 and create custom simulation worlds
+2. **Write** SDF files for environments and robot models
+3. **Simulate** physics accurately (gravity, friction, contact dynamics)
+4. **Integrate** sensors (cameras, LiDAR, IMU) in simulation
+5. **Bridge** ROS 2 and Unity for co-simulation
+6. **Validate** controllers in simulation before real-world deployment
+
+---
+
+## 6.1 Why Simulation?
+
+### The Sim-to-Real Challenge
+
+Physical robots are:
+- **Expensive**: $50k-$150k for research-grade humanoids
+- **Slow**: Real-time data collection limits training speed
+- **Dangerous**: Falls can damage hardware
+- **Limited**: One robot = one experiment at a time
+
+**Simulation enables**:
+- Parallel experiments (100s of virtual robots)
+- Rapid iteration (10-1000x faster than real-time)
+- Safety (test risky behaviors)
+- Cost-effective development
+
+> **Arthur D. Little (2025)**: "Foundation models trained in simulation with domain randomization achieve 70-90% sim-to-real transfer success rates, compared to &lt;30% with naive simulation." [1, p. 15]
+
+### Simulation Reality Gap
+
+The **reality gap** is the difference between simulated and real-world behavior:
+
+| Source of Gap | Impact | Mitigation |
+|---------------|--------|------------|
+| Physics approximation | Contacts, friction | Higher solver rates, tuned parameters |
+| Sensor noise | Unrealistic clean data | Add noise models |
+| Latency | No communication delays | Simulate network delays |
+| Unmodeled effects | Cable drag, wear | System identification, adaptation |
+
+**Domain Randomization** [2]: Vary simulation parameters during training (friction, lighting, mass) to create robust policies.
+
+---
+
+## 6.2 Gazebo Classic Overview
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────┐
+│           Gazebo Server (gzserver)              │
+│   Physics Engine (ODE, Bullet, Simbody)        │
+│   World Management, Sensor Simulation          │
+└──────────────────┬──────────────────────────────┘
+                   │ (TCP/IP)
+┌──────────────────▼──────────────────────────────┐
+│           Gazebo Client (gzclient)              │
+│   3D Rendering (OGRE), GUI                      │
+└──────────────────┬──────────────────────────────┘
+                   │
+┌──────────────────▼──────────────────────────────┐
+│           ROS 2 Bridge (gazebo_ros)             │
+│   Publishes sensor data, subscribes commands   │
+└─────────────────────────────────────────────────┘
+```
+
+**Figure 6.1**: Gazebo architecture. Server handles physics, client renders 3D visualization, ROS 2 bridge enables communication.
+
+### Installation
+
+```bash
+# Install Gazebo Classic 11
+sudo apt install ros-humble-gazebo-ros-pkgs
+
+# Verify installation
+gazebo --version
+# Output: Gazebo multi-robot simulator, version 11.x.x
+
+# Launch empty world
+gazebo
+```
+
+---
+
+## 6.3 SDF: Simulation Description Format
+
+### SDF vs URDF
+
+| Feature | URDF | SDF |
+|---------|------|-----|
+| Purpose | Robot description | Complete world (robots + environment) |
+| Physics | No | Yes (friction, inertia, collisions) |
+| Sensors | Limited | Extensive (cameras, LiDAR, IMU, GPS) |
+| Plugins | Via Gazebo extensions | Native support |
+| Format | XML | XML (similar syntax) |
+
+**Best Practice**: Define robot in URDF, convert to SDF for simulation.
+
+### Simple World SDF
+
+```xml
+<?xml version="1.0" ?>
+<!--
+Kitchen environment for humanoid robot simulation.
+Includes table, objects, lighting, and physics configuration.
+
+Author: PIAIC Humanoid AI Course
+Reference: Gazebo SDF Specification v1.9
+-->
+<sdf version="1.9">
+  <world name="kitchen_world">
+
+    <!-- Physics engine configuration -->
+    <physics type="ode">
+      <max_step_size>0.001</max_step_size>  <!-- 1ms timestep -->
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>1000</real_time_update_rate>
+      <gravity>0 0 -9.81</gravity>
+    </physics>
+
+    <!-- Lighting -->
+    <light name="sun" type="directional">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <direction>-0.5 0.5 -1</direction>
+    </light>
+
+    <!-- Ground plane -->
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>100 100</size>
+            </plane>
+          </geometry>
+          <surface>
+            <friction>
+              <ode>
+                <mu>100</mu>  <!-- High friction (no slip) -->
+                <mu2>100</mu2>
+              </ode>
+            </friction>
+          </surface>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>100 100</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.8 0.8 0.8 1</ambient>
+            <diffuse>0.8 0.8 0.8 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Kitchen table -->
+    <model name="table">
+      <static>true</static>
+      <pose>2 0 0 0 0 0</pose>
+      <link name="table_top">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>1.2 0.8 0.05</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>1.2 0.8 0.05</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.6 0.4 0.2 1</ambient>
+            <diffuse>0.6 0.4 0.2 1</diffuse>
+          </material>
+        </visual>
+        <inertial>
+          <mass>20</mass>
+          <inertia>
+            <ixx>1.0</ixx>
+            <iyy>1.5</iyy>
+            <izz>2.0</izz>
+          </inertia>
+        </inertial>
+      </link>
+
+      <!-- Table legs (simplified - one leg shown) -->
+      <link name="leg1">
+        <pose>0.5 0.35 -0.375 0 0 0</pose>
+        <collision name="collision">
+          <geometry>
+            <cylinder>
+              <radius>0.03</radius>
+              <length>0.75</length>
+            </cylinder>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <cylinder>
+              <radius>0.03</radius>
+              <length>0.75</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <ambient>0.3 0.3 0.3 1</ambient>
+          </material>
+        </visual>
+      </link>
+
+      <!-- Joint connecting leg to top -->
+      <joint name="leg1_joint" type="fixed">
+        <parent>table_top</parent>
+        <child>leg1</child>
+      </joint>
+
+      <!-- Repeat for 3 more legs... -->
+    </model>
+
+    <!-- Red mug (graspable object) -->
+    <model name="red_mug">
+      <pose>2 0 0.85 0 0 0</pose>
+      <link name="mug">
+        <collision name="collision">
+          <geometry>
+            <cylinder>
+              <radius>0.04</radius>
+              <length>0.12</length>
+            </cylinder>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <cylinder>
+              <radius>0.04</radius>
+              <length>0.12</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <ambient>0.8 0.1 0.1 1</ambient>
+            <diffuse>0.8 0.1 0.1 1</diffuse>
+          </material>
+        </visual>
+        <inertial>
+          <mass>0.3</mass>
+          <inertia>
+            <ixx>0.0001</ixx>
+            <iyy>0.0001</iyy>
+            <izz>0.00005</izz>
+          </inertia>
+        </inertial>
+      </link>
+    </model>
+
+  </world>
+</sdf>
+```
+
+**Launch the world**:
+```bash
+gazebo kitchen_world.sdf
+```
+
+---
+
+## 6.4 Robot Model in Gazebo
+
+### URDF to SDF Conversion
+
+```bash
+# Convert URDF to SDF
+gz sdf -p humanoid.urdf > humanoid.sdf
+```
+
+### Adding Gazebo Plugins to URDF
+
+Plugins enable ROS 2 communication:
+
+```xml
+<?xml version="1.0"?>
+<robot name="humanoid_gazebo" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- Include base URDF -->
+  <xacro:include filename="humanoid.urdf.xacro"/>
+
+  <!-- Gazebo-specific properties -->
+  <gazebo reference="torso">
+    <material>Gazebo/Blue</material>
+    <mu1>0.8</mu1>  <!-- Friction coefficient -->
+    <mu2>0.8</mu2>
+  </gazebo>
+
+  <!-- ROS 2 Control Plugin -->
+  <gazebo>
+    <plugin name="gazebo_ros2_control" filename="libgazebo_ros2_control.so">
+      <robot_sim_type>gazebo_ros2_control/GazeboSystem</robot_sim_type>
+      <parameters>$(find humanoid_control)/config/controllers.yaml</parameters>
+    </plugin>
+  </gazebo>
+
+  <!-- Joint State Publisher Plugin -->
+  <gazebo>
+    <plugin name="joint_state_publisher" filename="libgazebo_ros_joint_state_publisher.so">
+      <ros>
+        <namespace>/humanoid</namespace>
+        <remapping>~/out:=joint_states</remapping>
+      </ros>
+      <update_rate>50</update_rate>
+    </plugin>
+  </gazebo>
+
+  <!-- IMU Sensor Plugin -->
+  <gazebo reference="torso">
+    <sensor name="imu_sensor" type="imu">
+      <always_on>true</always_on>
+      <update_rate>100</update_rate>
+      <visualize>true</visualize>
+      <topic>imu</topic>
+      <plugin name="imu_plugin" filename="libgazebo_ros_imu_sensor.so">
+        <ros>
+          <namespace>/humanoid</namespace>
+          <remapping>~/out:=imu/data</remapping>
+        </ros>
+        <initial_orientation_as_reference>false</initial_orientation_as_reference>
+      </plugin>
+    </sensor>
+  </gazebo>
+
+  <!-- Camera Plugin -->
+  <gazebo reference="head">
+    <sensor name="camera" type="camera">
+      <camera>
+        <horizontal_fov>1.047</horizontal_fov>  <!-- 60 degrees -->
+        <image>
+          <width>640</width>
+          <height>480</height>
+          <format>R8G8B8</format>
+        </image>
+        <clip>
+          <near>0.1</near>
+          <far>100</far>
+        </clip>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.007</stddev>
+        </noise>
+      </camera>
+      <always_on>true</always_on>
+      <update_rate>30</update_rate>
+      <visualize>true</visualize>
+      <plugin name="camera_controller" filename="libgazebo_ros_camera.so">
+        <ros>
+          <namespace>/humanoid</namespace>
+          <remapping>~/image_raw:=camera/image_raw</remapping>
+          <remapping>~/camera_info:=camera/camera_info</remapping>
+        </ros>
+        <camera_name>head_camera</camera_name>
+        <frame_name>head_camera_optical</frame_name>
+        <hack_baseline>0.07</hack_baseline>
+      </plugin>
+    </sensor>
+  </gazebo>
+
+</robot>
+```
+
+---
+
+## 6.5 Physics Configuration
+
+### ODE (Open Dynamics Engine)
+
+Default physics engine in Gazebo. Good for real-time, moderate accuracy.
+
+```xml
+<physics type="ode">
+  <max_step_size>0.001</max_step_size>
+  <real_time_factor>1.0</real_time_factor>
+  <real_time_update_rate>1000</real_time_update_rate>
+
+  <ode>
+    <solver>
+      <type>quick</type>  <!-- Quick solver (fast, less accurate) -->
+      <iters>50</iters>   <!-- Solver iterations -->
+      <sor>1.3</sor>      <!-- Successive Over-Relaxation -->
+    </solver>
+
+    <constraints>
+      <cfm>0.0</cfm>      <!-- Constraint Force Mixing -->
+      <erp>0.2</erp>      <!-- Error Reduction Parameter -->
+      <contact_max_correcting_vel>100.0</contact_max_correcting_vel>
+      <contact_surface_layer>0.001</contact_surface_layer>
+    </constraints>
+  </ode>
+
+  <gravity>0 0 -9.81</gravity>
+</physics>
+```
+
+### Contact Dynamics
+
+**Friction**: Coulomb friction model
+$$
+F_{\text{friction}} \leq \mu \cdot F_{\text{normal}}
+$$
+
+```xml
+<surface>
+  <friction>
+    <ode>
+      <mu>1.0</mu>   <!-- Friction coefficient -->
+      <mu2>1.0</mu2> <!-- Secondary direction -->
+      <fdir1>0 0 0</fdir1>
+      <slip1>0.0</slip1>
+      <slip2>0.0</slip2>
+    </ode>
+  </friction>
+
+  <contact>
+    <ode>
+      <kp>1000000.0</kp>  <!-- Contact stiffness -->
+      <kd>1.0</kd>        <!-- Contact damping -->
+      <max_vel>0.01</max_vel>
+      <min_depth>0.001</min_depth>
+    </ode>
+  </contact>
+</surface>
+```
+
+**Tuning Guidelines**:
+- **High kp, low kd**: Stiff contacts (rigid objects)
+- **Low kp, high kd**: Soft contacts (cushions)
+- **High mu**: No slip (foot-ground)
+- **Low mu**: Slippery (ice)
+
+---
+
+## 6.6 Sensor Simulation
+
+### Camera Sensor
+
+```python
+#!/usr/bin/env python3
+"""
+Subscribe to simulated camera and perform object detection.
+Demonstrates sensor data processing pipeline.
+"""
+
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import Image
+from cv_bridge import CvBridge
+import cv2
+import numpy as np
+
+
+class CameraProcessor(Node):
+    """Process camera images from Gazebo."""
+
+    def __init__(self):
+        super().__init__('camera_processor')
+
+        self.subscription = self.create_subscription(
+            Image,
+            '/humanoid/camera/image_raw',
+            self.image_callback,
+            10
+        )
+
+        self.bridge = CvBridge()
+        self.get_logger().info('Camera processor started')
+
+    def image_callback(self, msg):
+        """Process incoming image."""
+        # Convert ROS Image to OpenCV
+        cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+
+        # Simple red object detection (for red mug)
+        hsv = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
+
+        # Red color range
+        lower_red = np.array([0, 100, 100])
+        upper_red = np.array([10, 255, 255])
+        mask = cv2.inRange(hsv, lower_red, upper_red)
+
+        # Find contours
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        if contours:
+            # Largest contour
+            largest = max(contours, key=cv2.contourArea)
+            M = cv2.moments(largest)
+
+            if M["m00"] > 0:
+                cx = int(M["m10"] / M["m00"])
+                cy = int(M["m01"] / M["m00"])
+
+                self.get_logger().info(f'Red object detected at pixel ({cx}, {cy})')
+
+                # Draw circle on object
+                cv2.circle(cv_image, (cx, cy), 10, (0, 255, 0), -1)
+
+        # Display (optional)
+        cv2.imshow('Camera View', cv_image)
+        cv2.waitKey(1)
+
+
+def main():
+    rclpy.init()
+    node = CameraProcessor()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+### LiDAR Sensor
+
+```xml
+<!-- Add LiDAR to robot URDF -->
+<gazebo reference="head">
+  <sensor name="lidar" type="ray">
+    <pose>0 0 0.1 0 0 0</pose>
+    <visualize>true</visualize>
+    <update_rate>10</update_rate>
+    <ray>
+      <scan>
+        <horizontal>
+          <samples>360</samples>
+          <resolution>1</resolution>
+          <min_angle>-3.14159</min_angle>
+          <max_angle>3.14159</max_angle>
+        </horizontal>
+      </scan>
+      <range>
+        <min>0.1</min>
+        <max>30.0</max>
+        <resolution>0.01</resolution>
+      </range>
+      <noise>
+        <type>gaussian</type>
+        <mean>0.0</mean>
+        <stddev>0.01</stddev>
+      </noise>
+    </ray>
+    <plugin name="lidar_controller" filename="libgazebo_ros_ray_sensor.so">
+      <ros>
+        <namespace>/humanoid</namespace>
+        <remapping>~/out:=scan</remapping>
+      </ros>
+      <output_type>sensor_msgs/LaserScan</output_type>
+      <frame_name>head_lidar</frame_name>
+    </plugin>
+  </sensor>
+</gazebo>
+```
+
+---
+
+## 6.7 Launch Files
+
+### Python Launch File
+
+```python
+#!/usr/bin/env python3
+"""
+Launch file for humanoid robot in Gazebo.
+Spawns robot, starts controllers, launches RViz.
+"""
+
+from launch import LaunchDescription
+from launch.actions import IncludeLaunchDescription, ExecuteProcess
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import PathJoinSubstitution
+from launch_ros.actions import Node
+from launch_ros.substitutions import FindPackageShare
+import os
+
+
+def generate_launch_description():
+    # Package directories
+    pkg_gazebo_ros = FindPackageShare('gazebo_ros')
+    pkg_humanoid = FindPackageShare('humanoid_description')
+
+    # World file path
+    world_file = PathJoinSubstitution([
+        pkg_humanoid,
+        'worlds',
+        'kitchen_world.sdf'
+    ])
+
+    # Robot URDF path
+    urdf_file = PathJoinSubstitution([
+        pkg_humanoid,
+        'urdf',
+        'humanoid_gazebo.urdf.xacro'
+    ])
+
+    # Process URDF (xacro to XML)
+    robot_description = ExecuteProcess(
+        cmd=['xacro', urdf_file],
+        output='screen'
+    )
+
+    # Launch Gazebo
+    gazebo = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            PathJoinSubstitution([
+                pkg_gazebo_ros,
+                'launch',
+                'gazebo.launch.py'
+            ])
+        ]),
+        launch_arguments={'world': world_file}.items()
+    )
+
+    # Spawn robot in Gazebo
+    spawn_robot = Node(
+        package='gazebo_ros',
+        executable='spawn_entity.py',
+        arguments=[
+            '-entity', 'humanoid',
+            '-topic', '/robot_description',
+            '-x', '0',
+            '-y', '0',
+            '-z', '1.0'
+        ],
+        output='screen'
+    )
+
+    # Robot State Publisher
+    robot_state_publisher = Node(
+        package='robot_state_publisher',
+        executable='robot_state_publisher',
+        parameters=[{'robot_description': robot_description}],
+        output='screen'
+    )
+
+    # Joint State Publisher GUI (for manual control)
+    joint_state_publisher_gui = Node(
+        package='joint_state_publisher_gui',
+        executable='joint_state_publisher_gui',
+        output='screen'
+    )
+
+    # RViz
+    rviz = Node(
+        package='rviz2',
+        executable='rviz2',
+        arguments=['-d', PathJoinSubstitution([
+            pkg_humanoid,
+            'rviz',
+            'humanoid.rviz'
+        ])],
+        output='screen'
+    )
+
+    return LaunchDescription([
+        gazebo,
+        robot_state_publisher,
+        spawn_robot,
+        joint_state_publisher_gui,
+        rviz
+    ])
+```
+
+**Run the launch file**:
+```bash
+ros2 launch humanoid_description gazebo.launch.py
+```
+
+---
+
+## 6.8 Unity Simulation (Alternative)
+
+### Why Unity?
+
+- **Photorealistic rendering**: Better visual fidelity than Gazebo
+- **Cross-platform**: Windows, Linux, macOS
+- **ML-Agents**: Deep RL training framework
+- **Asset store**: Pre-made environments, characters
+
+### Unity-ROS 2 Bridge
+
+**ROS-TCP-Connector** [3]: Enables Unity ↔ ROS 2 communication.
+
+#### Setup Steps
+
+1. **Install Unity Hub** (2021.3 LTS or newer)
+2. **Create new project** (3D template)
+3. **Import packages**:
+   - ROS-TCP-Connector
+   - ML-Agents (optional)
+
+4. **Configure ROS endpoint**:
+
+```csharp
+// ROSConnection.cs
+using Unity.Robotics.ROSTCPConnector;
+
+public class ROSConnection : MonoBehaviour
+{
+    void Start()
+    {
+        ROSConnection.GetOrCreateInstance().Connect();
+    }
+}
+```
+
+5. **Publish Unity data to ROS 2**:
+
+```csharp
+using UnityEngine;
+using Unity.Robotics.ROSTCPConnector;
+using RosMessageTypes.Sensor;
+
+public class CameraPublisher : MonoBehaviour
+{
+    ROSConnection ros;
+    public string topicName = "camera/image_raw";
+
+    void Start()
+    {
+        ros = ROSConnection.GetOrCreateInstance();
+        ros.RegisterPublisher<ImageMsg>(topicName);
+    }
+
+    void Update()
+    {
+        // Capture camera image
+        Texture2D image = CaptureCamera();
+
+        // Convert to ROS message
+        ImageMsg msg = new ImageMsg
+        {
+            header = new HeaderMsg(),
+            height = (uint)image.height,
+            width = (uint)image.width,
+            encoding = "rgb8",
+            data = image.GetRawTextureData()
+        };
+
+        ros.Publish(topicName, msg);
+    }
+
+    Texture2D CaptureCamera()
+    {
+        // Capture from Unity camera
+        // Implementation details...
+        return new Texture2D(640, 480);
+    }
+}
+```
+
+---
+
+## 6.9 Lab: Humanoid Navigation in Simulation
+
+### Objective
+Implement a navigation stack for a humanoid robot in Gazebo:
+1. Spawn robot in kitchen world
+2. Use LiDAR for obstacle detection
+3. Navigate to target pose using velocity commands
+4. Visualize path in RViz
+
+### Architecture
+
+```
+[Gazebo] --> /scan (LiDAR) --> [Nav2] --> /cmd_vel --> [Gazebo]
+             /odom
+```
+
+### Step 1: Install Nav2
+
+```bash
+sudo apt install ros-humble-navigation2 ros-humble-nav2-bringup
+```
+
+### Step 2: Configuration
+
+**File**: `nav2_params.yaml`
+
+```yaml
+amcl:
+  ros__parameters:
+    use_sim_time: True
+    alpha1: 0.2
+    alpha2: 0.2
+    alpha3: 0.2
+    alpha4: 0.2
+    alpha5: 0.2
+    base_frame_id: "base_footprint"
+    beam_skip_distance: 0.5
+    beam_skip_error_threshold: 0.9
+    beam_skip_threshold: 0.3
+    do_beamskip: false
+    global_frame_id: "map"
+    lambda_short: 0.1
+    laser_likelihood_max_dist: 2.0
+    laser_max_range: 100.0
+    laser_min_range: -1.0
+    laser_model_type: "likelihood_field"
+    max_beams: 60
+    max_particles: 2000
+    min_particles: 500
+    odom_frame_id: "odom"
+    pf_err: 0.05
+    pf_z: 0.99
+    recovery_alpha_fast: 0.0
+    recovery_alpha_slow: 0.0
+    resample_interval: 1
+    robot_model_type: "nav2_amcl::DifferentialMotionModel"
+    save_pose_rate: 0.5
+    sigma_hit: 0.2
+    tf_broadcast: true
+    transform_tolerance: 1.0
+    update_min_a: 0.2
+    update_min_d: 0.25
+    z_hit: 0.5
+    z_max: 0.05
+    z_rand: 0.5
+    z_short: 0.05
+
+bt_navigator:
+  ros__parameters:
+    use_sim_time: True
+    global_frame: map
+    robot_base_frame: base_link
+    odom_topic: /odom
+    bt_loop_duration: 10
+    default_server_timeout: 20
+    enable_groot_monitoring: True
+    groot_zmq_publisher_port: 1666
+    groot_zmq_server_port: 1667
+    plugin_lib_names:
+    - nav2_compute_path_to_pose_action_bt_node
+    - nav2_follow_path_action_bt_node
+    - nav2_back_up_action_bt_node
+    - nav2_spin_action_bt_node
+    - nav2_wait_action_bt_node
+    - nav2_clear_costmap_service_bt_node
+    - nav2_is_stuck_condition_bt_node
+    - nav2_goal_reached_condition_bt_node
+    - nav2_goal_updated_condition_bt_node
+    - nav2_initial_pose_received_condition_bt_node
+    - nav2_reinitialize_global_localization_service_bt_node
+    - nav2_rate_controller_bt_node
+    - nav2_distance_controller_bt_node
+    - nav2_speed_controller_bt_node
+    - nav2_truncate_path_action_bt_node
+    - nav2_goal_updater_node_bt_node
+    - nav2_recovery_node_bt_node
+    - nav2_pipeline_sequence_bt_node
+    - nav2_round_robin_node_bt_node
+    - nav2_transform_available_condition_bt_node
+    - nav2_time_expired_condition_bt_node
+    - nav2_distance_traveled_condition_bt_node
+
+controller_server:
+  ros__parameters:
+    use_sim_time: True
+    controller_frequency: 20.0
+    min_x_velocity_threshold: 0.001
+    min_y_velocity_threshold: 0.5
+    min_theta_velocity_threshold: 0.001
+    progress_checker_plugin: "progress_checker"
+    goal_checker_plugins: ["goal_checker"]
+    controller_plugins: ["FollowPath"]
+
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      required_movement_radius: 0.5
+      movement_time_allowance: 10.0
+
+    goal_checker:
+      plugin: "nav2_controller::SimpleGoalChecker"
+      xy_goal_tolerance: 0.25
+      yaw_goal_tolerance: 0.25
+      stateful: True
+
+    FollowPath:
+      plugin: "dwb_core::DWBLocalPlanner"
+      debug_trajectory_details: True
+      min_vel_x: 0.0
+      min_vel_y: 0.0
+      max_vel_x: 0.5
+      max_vel_y: 0.0
+      max_vel_theta: 1.0
+      min_speed_xy: 0.0
+      max_speed_xy: 0.5
+      min_speed_theta: 0.0
+      acc_lim_x: 2.5
+      acc_lim_y: 0.0
+      acc_lim_theta: 3.2
+      decel_lim_x: -2.5
+      decel_lim_y: 0.0
+      decel_lim_theta: -3.2
+      vx_samples: 20
+      vy_samples: 5
+      vtheta_samples: 20
+      sim_time: 1.7
+      linear_granularity: 0.05
+      angular_granularity: 0.025
+      transform_tolerance: 0.2
+      xy_goal_tolerance: 0.25
+      trans_stopped_velocity: 0.25
+      short_circuit_trajectory_evaluation: True
+      stateful: True
+      critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
+```
+
+### Step 3: Launch Navigation
+
+```python
+# nav2_launch.py
+from launch import LaunchDescription
+from launch_ros.actions import Node
+from launch.actions import IncludeLaunchDescription
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import PathJoinSubstitution
+from launch_ros.substitutions import FindPackageShare
+
+
+def generate_launch_description():
+    nav2_bringup = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            PathJoinSubstitution([
+                FindPackageShare('nav2_bringup'),
+                'launch',
+                'bringup_launch.py'
+            ])
+        ]),
+        launch_arguments={
+            'use_sim_time': 'True',
+            'params_file': 'nav2_params.yaml'
+        }.items()
+    )
+
+    return LaunchDescription([nav2_bringup])
+```
+
+**Run**:
+```bash
+# Terminal 1: Gazebo + Robot
+ros2 launch humanoid_description gazebo.launch.py
+
+# Terminal 2: Navigation
+ros2 launch humanoid_navigation nav2_launch.py
+
+# Terminal 3: Set goal in RViz
+# Click "2D Goal Pose" and place on map
+```
+
+---
+
+## Exercises
+
+### Basic (40%)
+1. **Create** a simple Gazebo world with a ground plane and 3 boxes (different colors). Spawn the world and take a screenshot.
+
+2. **Modify** the kitchen world SDF to add 2 more objects (e.g., a blue cup, a green plate). Change their positions and colors.
+
+3. **Add** Gaussian noise to the camera sensor (stddev=0.01). Compare images with and without noise.
+
+### Intermediate (40%)
+4. **Implement** a node that subscribes to `/humanoid/scan` (LiDAR) and detects obstacles within 1 meter. Publish warnings on `/obstacle_alert` topic.
+
+5. **Tune** physics parameters: Test three friction coefficients (mu = 0.1, 0.5, 1.0) for the ground plane. Record robot slip behavior (qualitative observation).
+
+6. **Create** a Unity scene with a humanoid character. Install ROS-TCP-Connector and publish camera images to ROS 2. Verify images in RViz.
+
+### Advanced (20%)
+7. **Domain Randomization**: Modify the Gazebo world to randomize object positions, colors, and lighting at each simulation reset. Implement a Python script that resets the world 10 times and logs object poses.
+
+8. **Compare** Gazebo vs. Unity for humanoid simulation. Metrics: rendering FPS, physics accuracy (drop test), sensor latency. Present results in a table.
+
+9. **Capstone Integration**: Design the simulation environment for your Week 13 capstone project. Include:
+   - World SDF with furniture and objects
+   - Robot spawn position
+   - Camera and LiDAR configuration
+   - Submit world file and screenshot
+
+---
+
+## Further Reading
+
+- **Gazebo Tutorials**: https://classic.gazebosim.org/tutorials
+- **SDF Specification**: http://sdformat.org/spec
+- **Nav2 Documentation**: https://navigation.ros.org/
+- **Unity Robotics Hub**: https://github.com/Unity-Technologies/Unity-Robotics-Hub
+
+---
+
+## Summary
+
+- **Gazebo Classic** enables physics-based simulation of robots and environments
+- **SDF** (Simulation Description Format) describes complete worlds with physics properties
+- **Physics engines** (ODE, Bullet) simulate gravity, friction, contact dynamics
+- **Sensor plugins** (camera, LiDAR, IMU) generate realistic sensor data
+- **Domain randomization** bridges the sim-to-real gap by creating robust policies
+- **Unity** provides an alternative with photorealistic rendering and ML-Agents integration
+- **Nav2** enables autonomous navigation with path planning and obstacle avoidance
+
+**Next**: [Week 8-10: NVIDIA Isaac](./week-08)
+
+---
+
+## References
+
+[1] Arthur D. Little, "BLUE SHIFT Physical AI," 2025, p. 15.
+
+[2] X. B. Peng et al., "Sim-to-Real Transfer of Robotic Control with Dynamics Randomization," *ICRA*, 2018. DOI: 10.1109/ICRA.2018.8460528
+
+[3] Unity Technologies, "ROS-TCP-Connector," https://github.com/Unity-Technologies/ROS-TCP-Connector, 2024.
+
+---
+
+

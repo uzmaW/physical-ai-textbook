@@ -1,0 +1,763 @@
+---
+id: week-05
+title: tf2, Control & Multi-Robot Systems
+sidebar_label: Transforms, Control & Multi-Robot
+sidebar_position: 5
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Week 5: tf2, ros2_control & Multi-Robot Systems
+
+## Learning Outcomes
+
+By the end of this module, you will be able to:
+
+1. **Use** tf2 for coordinate frame transformations in 3D space
+2. **Implement** ros2_control for hardware-agnostic robot control
+3. **Design** controllers for position, velocity, and effort interfaces
+4. **Deploy** multi-robot systems with namespaces and multi-master patterns
+5. **Integrate** external sensors with proper frame transformations
+6. **Debug** tf tree issues and resolve transform lookup failures
+
+---
+
+## 5.1 tf2: Transform Library
+
+### Why tf2?
+
+**Problem**: Robots have multiple coordinate frames:
+- Base link, torso, head, camera, end-effector, world, map...
+- Need to transform points/vectors between frames
+- Frames move relative to each other (joints, mobile base)
+
+**tf2** maintains a tree of coordinate frames over time, enabling:
+- Lookup transforms: "What's the camera pose relative to the base?"
+- Transform points: "Where is this object in the world frame?"
+- Temporal queries: "Where was the robot 2 seconds ago?"
+
+### Frame Tree Example
+
+```
+world
+  └── map
+       └── odom
+            └── base_link (robot base)
+                 ├── torso
+                 │    ├── head
+                 │    │    ├── camera_link
+                 │    │    └── lidar_link
+                 │    ├── left_arm
+                 │    │    ├── left_shoulder
+                 │    │    ├── left_elbow
+                 │    │    └── left_hand
+                 │    └── right_arm
+                 │         ├── right_shoulder
+                 │         ├── right_elbow
+                 │         └── right_hand
+                 ├── left_leg
+                 │    ├── left_hip
+                 │    ├── left_knee
+                 │    └── left_foot
+                 └── right_leg
+                      ├── right_hip
+                      ├── right_knee
+                      └── right_foot
+```
+
+**Figure 5.1**: Typical humanoid robot tf tree. Each node is a coordinate frame.
+
+---
+
+## 5.2 Broadcasting Transforms
+
+### Static Transforms
+
+For fixed relationships (e.g., camera mounted on head):
+
+```python
+#!/usr/bin/env python3
+"""
+Static transform broadcaster.
+Publishes fixed transforms (e.g., sensor mount positions).
+"""
+
+import rclpy
+from rclpy.node import Node
+from geometry_msgs.msg import TransformStamped
+from tf2_ros import StaticTransformBroadcaster
+
+
+class StaticFramePublisher(Node):
+    """Broadcast static transforms."""
+
+    def __init__(self):
+        super().__init__('static_tf_publisher')
+
+        self.tf_broadcaster = StaticTransformBroadcaster(self)
+
+        # Camera mounted 0.1m forward, 0.05m up from head
+        self.publish_camera_transform()
+
+        # LiDAR mounted on top of head
+        self.publish_lidar_transform()
+
+    def publish_camera_transform(self):
+        """Publish camera->head transform."""
+        t = TransformStamped()
+
+        t.header.stamp = self.get_clock().now().to_msg()
+        t.header.frame_id = 'head'
+        t.child_frame_id = 'camera_link'
+
+        # Translation
+        t.transform.translation.x = 0.1
+        t.transform.translation.y = 0.0
+        t.transform.translation.z = 0.05
+
+        # Rotation (camera points forward)
+        t.transform.rotation.x = 0.0
+        t.transform.rotation.y = 0.0
+        t.transform.rotation.z = 0.0
+        t.transform.rotation.w = 1.0
+
+        self.tf_broadcaster.sendTransform(t)
+        self.get_logger().info('Published static camera transform')
+
+    def publish_lidar_transform(self):
+        """Publish lidar->head transform."""
+        t = TransformStamped()
+
+        t.header.stamp = self.get_clock().now().to_msg()
+        t.header.frame_id = 'head'
+        t.child_frame_id = 'lidar_link'
+
+        t.transform.translation.x = 0.0
+        t.transform.translation.y = 0.0
+        t.transform.translation.z = 0.15  # 15cm above head
+
+        t.transform.rotation.w = 1.0
+
+        self.tf_broadcaster.sendTransform(t)
+        self.get_logger().info('Published static lidar transform')
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = StaticFramePublisher()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+### Dynamic Transforms
+
+For moving relationships (e.g., robot odometry, joint movements):
+
+```python
+#!/usr/bin/env python3
+"""
+Dynamic transform broadcaster.
+Publishes changing transforms (e.g., robot pose from odometry).
+"""
+
+import rclpy
+from rclpy.node import Node
+from geometry_msgs.msg import TransformStamped
+from nav_msgs.msg import Odometry
+from tf2_ros import TransformBroadcaster
+import math
+
+
+class DynamicFramePublisher(Node):
+    """Broadcast dynamic transforms from odometry."""
+
+    def __init__(self):
+        super().__init__('dynamic_tf_publisher')
+
+        self.tf_broadcaster = TransformBroadcaster(self)
+
+        # Subscribe to odometry
+        self.odom_sub = self.create_subscription(
+            Odometry,
+            '/odom',
+            self.odom_callback,
+            10
+        )
+
+    def odom_callback(self, msg):
+        """Broadcast odom->base_link transform from odometry."""
+        t = TransformStamped()
+
+        t.header.stamp = self.get_clock().now().to_msg()
+        t.header.frame_id = 'odom'
+        t.child_frame_id = 'base_link'
+
+        # Copy position
+        t.transform.translation.x = msg.pose.pose.position.x
+        t.transform.translation.y = msg.pose.pose.position.y
+        t.transform.translation.z = msg.pose.pose.position.z
+
+        # Copy orientation
+        t.transform.rotation = msg.pose.pose.orientation
+
+        self.tf_broadcaster.sendTransform(t)
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = DynamicFramePublisher()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+---
+
+## 5.3 Looking Up Transforms
+
+```python
+#!/usr/bin/env python3
+"""
+Transform lookup example.
+Query transforms between frames and transform points.
+"""
+
+import rclpy
+from rclpy.node import Node
+from tf2_ros import TransformListener, Buffer
+from geometry_msgs.msg import PointStamped
+import math
+
+
+class TransformListenerNode(Node):
+    """Listen to tf and transform points."""
+
+    def __init__(self):
+        super().__init__('tf_listener')
+
+        # Create buffer and listener
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+
+        # Timer to periodically query transforms
+        self.timer = self.create_timer(1.0, self.timer_callback)
+
+        self.get_logger().info('TF listener ready')
+
+    def timer_callback(self):
+        """Query transform and transform a point."""
+        try:
+            # Lookup transform from camera to base_link
+            transform = self.tf_buffer.lookup_transform(
+                'base_link',      # Target frame
+                'camera_link',    # Source frame
+                rclpy.time.Time() # Latest available
+            )
+
+            self.get_logger().info(
+                f'Camera is at ({transform.transform.translation.x:.2f}, '
+                f'{transform.transform.translation.y:.2f}, '
+                f'{transform.transform.translation.z:.2f}) '
+                f'relative to base_link'
+            )
+
+            # Transform a point
+            point_in_camera = PointStamped()
+            point_in_camera.header.frame_id = 'camera_link'
+            point_in_camera.header.stamp = self.get_clock().now().to_msg()
+            point_in_camera.point.x = 1.0  # 1m in front of camera
+            point_in_camera.point.y = 0.0
+            point_in_camera.point.z = 0.0
+
+            # Transform to base_link frame
+            point_in_base = self.tf_buffer.transform(
+                point_in_camera,
+                'base_link',
+                timeout=rclpy.duration.Duration(seconds=1.0)
+            )
+
+            self.get_logger().info(
+                f'Point in base_link: ({point_in_base.point.x:.2f}, '
+                f'{point_in_base.point.y:.2f}, {point_in_base.point.z:.2f})'
+            )
+
+        except Exception as e:
+            self.get_logger().warn(f'Transform lookup failed: {e}')
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = TransformListenerNode()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+---
+
+## 5.4 ros2_control Framework
+
+### Architecture
+
+```
+┌────────────────────────────────────────────┐
+│        Controller Manager                  │
+│  (Lifecycle management, switching)         │
+└────────┬───────────────────────────────────┘
+         │
+         ├─→ Position Controller (PID)
+         ├─→ Velocity Controller (feedforward)
+         ├─→ Effort Controller (torque)
+         └─→ Joint Trajectory Controller
+                         │
+         ┌───────────────▼────────────────┐
+         │    Hardware Interface          │
+         │  (read sensors, write commands) │
+         └────────────────────────────────┘
+                         │
+         ┌───────────────▼────────────────┐
+         │      Robot Hardware            │
+         │  (motors, encoders, IMU)       │
+         └────────────────────────────────┘
+```
+
+**Figure 5.2**: ros2_control architecture. Controllers are hardware-agnostic; hardware interface handles low-level communication.
+
+---
+
+## 5.5 Hardware Interface
+
+### Configuration YAML
+
+```yaml
+# hardware_interface.yaml
+
+hardware:
+  - name: HumanoidHardware
+    type: hardware_interface/HumanoidSystemHardware
+    parameters:
+      usb_port: /dev/ttyUSB0
+      baud_rate: 115200
+
+    joints:
+      - name: left_hip_pitch
+        command_interface: position
+        state_interface: position, velocity, effort
+        min_position: -1.57
+        max_position: 1.57
+
+      - name: left_knee
+        command_interface: position
+        state_interface: position, velocity, effort
+        min_position: 0.0
+        max_position: 2.36
+
+      # ... other joints ...
+
+    sensors:
+      - name: imu
+        type: sensor_msgs/Imu
+        frame_id: imu_link
+
+controller_manager:
+  ros__parameters:
+    update_rate: 100  # Hz
+
+    # Controllers
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    position_controller:
+      type: position_controllers/JointGroupPositionController
+
+    velocity_controller:
+      type: velocity_controllers/JointGroupVelocityController
+
+    effort_controller:
+      type: effort_controllers/JointGroupEffortController
+
+position_controller:
+  ros__parameters:
+    joints:
+      - left_hip_pitch
+      - left_knee
+      - left_ankle
+      - right_hip_pitch
+      - right_knee
+      - right_ankle
+```
+
+---
+
+## 5.6 Custom Controller
+
+```cpp
+// simple_position_controller.cpp
+#include "controller_interface/controller_interface.hpp"
+#include "rclcpp/rclcpp.hpp"
+#include "std_msgs/msg/float64_multi_array.hpp"
+
+namespace simple_controllers
+{
+
+class SimplePositionController : public controller_interface::ControllerInterface
+{
+public:
+  controller_interface::InterfaceConfiguration command_interface_configuration() const override
+  {
+    controller_interface::InterfaceConfiguration config;
+    config.type = controller_interface::interface_configuration_type::INDIVIDUAL;
+
+    for (const auto & joint : joint_names_) {
+      config.names.push_back(joint + "/position");
+    }
+
+    return config;
+  }
+
+  controller_interface::InterfaceConfiguration state_interface_configuration() const override
+  {
+    controller_interface::InterfaceConfiguration config;
+    config.type = controller_interface::interface_configuration_type::INDIVIDUAL;
+
+    for (const auto & joint : joint_names_) {
+      config.names.push_back(joint + "/position");
+      config.names.push_back(joint + "/velocity");
+    }
+
+    return config;
+  }
+
+  controller_interface::return_type update(
+    const rclcpp::Time & /*time*/,
+    const rclcpp::Duration & /*period*/) override
+  {
+    // Read current state
+    for (size_t i = 0; i < joint_names_.size(); ++i) {
+      double current_pos = state_interfaces_[i * 2].get_value();
+      double current_vel = state_interfaces_[i * 2 + 1].get_value();
+
+      // Simple PID control
+      double error = target_positions_[i] - current_pos;
+      double command = kp_ * error - kd_ * current_vel;
+
+      // Write command
+      command_interfaces_[i].set_value(command);
+    }
+
+    return controller_interface::return_type::OK;
+  }
+
+  CallbackReturn on_init() override
+  {
+    joint_names_ = node_->get_parameter("joints").as_string_array();
+    kp_ = node_->get_parameter("kp").as_double();
+    kd_ = node_->get_parameter("kd").as_double();
+
+    target_positions_.resize(joint_names_.size(), 0.0);
+
+    // Create subscriber for commands
+    command_sub_ = node_->create_subscription<std_msgs::msg::Float64MultiArray>(
+      "~/commands",
+      10,
+      [this](const std_msgs::msg::Float64MultiArray::SharedPtr msg) {
+        target_positions_ = msg->data;
+      });
+
+    return CallbackReturn::SUCCESS;
+  }
+
+private:
+  std::vector<std::string> joint_names_;
+  std::vector<double> target_positions_;
+  double kp_{10.0};
+  double kd_{1.0};
+  rclcpp::Subscription<std_msgs::msg::Float64MultiArray>::SharedPtr command_sub_;
+};
+
+}  // namespace simple_controllers
+
+#include "pluginlib/class_list_macros.hpp"
+PLUGINLIB_EXPORT_CLASS(
+  simple_controllers::SimplePositionController,
+  controller_interface::ControllerInterface)
+```
+
+---
+
+## 5.7 Multi-Robot Systems
+
+### Namespacing Strategy
+
+**Problem**: Multiple robots need independent topic/service namespaces.
+
+**Solution**: Use ROS 2 namespaces.
+
+```bash
+# Robot 1
+ros2 run humanoid_control controller_node --ros-args \
+  -r __ns:=/robot_1 \
+  -p robot_id:=1
+
+# Robot 2
+ros2 run humanoid_control controller_node --ros-args \
+  -r __ns:=/robot_2 \
+  -p robot_id:=2
+```
+
+**Topics**:
+- `/robot_1/joint_states`
+- `/robot_1/cmd_vel`
+- `/robot_2/joint_states`
+- `/robot_2/cmd_vel`
+
+### Multi-Robot Launch File
+
+```python
+from launch import LaunchDescription
+from launch_ros.actions import Node
+from launch.actions import GroupAction
+from launch_ros.actions import PushRosNamespace
+
+
+def generate_launch_description():
+    robots = ['robot_1', 'robot_2', 'robot_3']
+
+    robot_nodes = []
+
+    for robot_name in robots:
+        # Create a group for each robot with namespace
+        robot_group = GroupAction([
+            PushRosNamespace(robot_name),
+
+            # Controllers for this robot
+            Node(
+                package='humanoid_control',
+                executable='position_controller',
+                name='position_controller',
+                parameters=[{'robot_id': robot_name}]
+            ),
+
+            Node(
+                package='humanoid_control',
+                executable='velocity_controller',
+                name='velocity_controller'
+            ),
+
+            # Robot state publisher with unique URDF
+            Node(
+                package='robot_state_publisher',
+                executable='robot_state_publisher',
+                parameters=[{
+                    'robot_description': f'robot_{robot_name}.urdf'
+                }]
+            )
+        ])
+
+        robot_nodes.append(robot_group)
+
+    return LaunchDescription(robot_nodes)
+```
+
+---
+
+## 5.8 Multi-Master with Domain IDs
+
+**Domain IDs** isolate ROS 2 networks.
+
+```bash
+# Domain 0 (default)
+export ROS_DOMAIN_ID=0
+ros2 run demo_nodes_cpp talker
+
+# Domain 1 (isolated)
+export ROS_DOMAIN_ID=1
+ros2 run demo_nodes_cpp talker  # Won't see Domain 0 messages
+```
+
+**Use Cases**:
+- Multiple robot groups in same building
+- Development vs. production systems
+- Isolate noisy/experimental systems
+
+---
+
+## 5.9 Lab: Multi-Humanoid Coordination
+
+### Objective
+Create a system with 3 humanoid robots:
+1. Each robot has independent navigation goals
+2. Centralized coordinator assigns tasks
+3. Robots avoid each other (simple proximity check)
+4. Visualize all robots in single RViz
+
+### Architecture
+
+```
+[Coordinator]
+     │
+     ├─→ /robot_1/goal → [Nav Robot 1]
+     ├─→ /robot_2/goal → [Nav Robot 2]
+     └─→ /robot_3/goal → [Nav Robot 3]
+
+[Collision Checker] subscribes to all /robot_*/pose topics
+```
+
+### Coordinator Node
+
+```python
+#!/usr/bin/env python3
+"""
+Multi-robot task coordinator.
+Assigns navigation goals to available robots.
+"""
+
+import rclpy
+from rclpy.node import Node
+from geometry_msgs.msg import PoseStamped
+from std_msgs.msg import String
+import random
+
+
+class MultiRobotCoordinator(Node):
+    """Coordinate multiple humanoid robots."""
+
+    def __init__(self):
+        super().__init__('multi_robot_coordinator')
+
+        self.robot_names = ['robot_1', 'robot_2', 'robot_3']
+
+        # Create goal publishers for each robot
+        self.goal_publishers = {}
+        for robot in self.robot_names:
+            pub = self.create_publisher(
+                PoseStamped,
+                f'/{robot}/goal_pose',
+                10
+            )
+            self.goal_publishers[robot] = pub
+
+        # Timer: Assign new goals every 10 seconds
+        self.timer = self.create_timer(10.0, self.assign_goals)
+
+        self.get_logger().info('Multi-robot coordinator ready')
+
+    def assign_goals(self):
+        """Assign random goals to all robots."""
+        for robot in self.robot_names:
+            goal = PoseStamped()
+            goal.header.frame_id = 'map'
+            goal.header.stamp = self.get_clock().now().to_msg()
+
+            # Random position in 10x10m area
+            goal.pose.position.x = random.uniform(-5.0, 5.0)
+            goal.pose.position.y = random.uniform(-5.0, 5.0)
+            goal.pose.position.z = 0.0
+
+            goal.pose.orientation.w = 1.0
+
+            self.goal_publishers[robot].publish(goal)
+
+            self.get_logger().info(
+                f'Assigned goal to {robot}: '
+                f'({goal.pose.position.x:.2f}, {goal.pose.position.y:.2f})'
+            )
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = MultiRobotCoordinator()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+---
+
+## Exercises
+
+### Basic (40%)
+1. **Create** a static transform broadcaster for a camera mounted 0.2m above the robot's head. Verify with `ros2 run tf2_ros tf2_echo head camera_link`.
+
+2. **Write** a node that listens to tf and prints the distance from `base_link` to `right_hand` every second.
+
+3. **Configure** ros2_control for a 3-joint arm (shoulder, elbow, wrist). Create position controller YAML config.
+
+### Intermediate (40%)
+4. **Implement** a transform listener that:
+   - Subscribes to `/detected_object` (PointStamped in camera frame)
+   - Transforms to base_link frame
+   - Publishes to `/object_in_base`
+
+5. **Create** a multi-robot system with 2 humanoids:
+   - Launch both with namespaces
+   - Each publishes /odom (simulated random walk)
+   - Visualize both in RViz with different colors
+
+6. **Write** a custom ros2_control controller that:
+   - Implements velocity control with feedforward + PID feedback
+   - Limits acceleration to prevent sudden jerks
+   - Logs control error every second
+
+### Advanced (20%)
+7. **Build** a collision avoidance system for 3 robots:
+   - Subscribe to all robot poses
+   - If any two robots are within 1m, stop both
+   - Resume when distance > 1.5m
+   - Log all collision events
+
+8. **Implement** transform interpolation:
+   - Record transform history (last 10 seconds)
+   - Service to query "Where was the end-effector 5 seconds ago?"
+   - Return interpolated transform
+
+9. **Capstone Prep**: Design tf tree for your Week 13 project:
+   - Identify all frames (world, map, odom, base, sensors, end-effectors)
+   - Draw tree diagram with parent-child relationships
+   - Specify which transforms are static vs. dynamic
+   - Submit diagram + URDF with all frames defined
+
+---
+
+## Further Reading
+
+- **tf2 Documentation**: https://docs.ros.org/en/humble/Tutorials/Intermediate/Tf2/Tf2-Main.html
+- **ros2_control**: https://control.ros.org/
+- **REP 105**: Coordinate Frames for Mobile Platforms
+
+---
+
+## Summary
+
+- **tf2** maintains a tree of coordinate frames with temporal history
+- **Static transforms**: Fixed relationships (sensor mounts)
+- **Dynamic transforms**: Moving relationships (odometry, joints)
+- **Transform lookup**: Query relationships between any two frames
+- **ros2_control**: Hardware-agnostic controller framework
+- **Controllers**: Position, velocity, effort, trajectory following
+- **Multi-robot**: Namespaces isolate communication, domain IDs isolate networks
+- **Multi-master**: Enable large-scale deployments with independent systems
+
+**Next**: [Week 6-7: Gazebo & Unity Simulation](./week-06)
+
+---
+
+

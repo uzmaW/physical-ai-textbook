@@ -1,0 +1,1088 @@
+---
+id: week-13
+title: Capstone Project - The Conversational Humanoid
+sidebar_label: Voice-Commanded Autonomous Humanoid
+sidebar_position: 13
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Week 13: Capstone Project - The Conversational Humanoid
+
+## Project Overview
+
+**Goal**: Build a voice-commanded simulated humanoid that integrates **all 12 weeks** of learning:
+
+- **Speech recognition** (Whisper) → **LLM task planning** (GPT-4)
+- **VLA model** (RT-2-style) → **Action primitives**
+- **Navigation** (Nav2) + **Manipulation** (MoveIt 2)
+- **Bipedal locomotion** (whole-body control) + **Perception** (YOLO, SLAM)
+- **Simulation**: ROS 2 + Gazebo OR Isaac Sim
+
+**Demo Task**:
+
+> 🎤 **Voice Command**: "Go to the kitchen table, pick up the red mug, and bring it to me."
+
+**System must**:
+1. Listen and transcribe voice (Whisper)
+2. Understand task and plan actions (GPT-4 VLA)
+3. Navigate to table while avoiding obstacles (Nav2)
+4. Detect mug using vision (YOLO)
+5. Plan and execute grasp (MoveIt 2)
+6. Walk to human with object (whole-body control)
+7. Hand off mug safely (compliance control)
+
+---
+
+## Learning Outcomes
+
+By completing this capstone, you will have:
+
+1. **Integrated** 10+ ROS 2 nodes into a cohesive Physical AI system
+2. **Deployed** a multimodal VLA pipeline (speech + vision + action)
+3. **Debugged** complex inter-node communication and timing issues
+4. **Evaluated** system performance with quantitative metrics
+5. **Documented** your work for reproducibility
+6. **Demonstrated** an end-to-end autonomous humanoid system
+
+---
+
+## System Architecture
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                  USER INTERFACE                              │
+│         [Microphone] → Voice Command Input                   │
+└────────────────────────┬─────────────────────────────────────┘
+                         │
+┌────────────────────────▼─────────────────────────────────────┐
+│        PERCEPTION LAYER (Week 5-6)                           │
+│  [Whisper ASR] → text                                        │
+│  [Camera] → [YOLO] → objects                                 │
+│  [LiDAR] → [SLAM] → map                                      │
+│  [IMU + Encoders] → robot state                              │
+└────────────────────────┬─────────────────────────────────────┘
+                         │
+┌────────────────────────▼─────────────────────────────────────┐
+│         COGNITION LAYER (Week 11-12)                         │
+│  [GPT-4 VLA] → task decomposition                            │
+│  → action_sequence: [navigate, detect, grasp, deliver]       │
+└────────────────────────┬─────────────────────────────────────┘
+                         │
+┌────────────────────────▼─────────────────────────────────────┐
+│         PLANNING LAYER (Week 8-9)                            │
+│  [Nav2] → path planning                                      │
+│  [MoveIt 2] → manipulation planning                          │
+│  [Footstep Planner] → bipedal steps                          │
+└────────────────────────┬─────────────────────────────────────┘
+                         │
+┌────────────────────────▼─────────────────────────────────────┐
+│         CONTROL LAYER (Week 7, 11)                           │
+│  [Whole-Body Controller] → joint torques                     │
+│  [Balance Controller] → ZMP tracking                         │
+│  [Compliance Controller] → safe handoff                      │
+└────────────────────────┬─────────────────────────────────────┘
+                         │
+┌────────────────────────▼─────────────────────────────────────┐
+│         SIMULATION (Week 6-8)                                │
+│  Gazebo OR Isaac Sim                                         │
+│  Unitree H1 URDF/USD                                         │
+│  Kitchen environment                                         │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Figure 13.1**: Complete system architecture integrating all course modules.
+
+---
+
+## Phase 1: Environment Setup (Days 1-2)
+
+### Simulation Choice
+
+<Tabs groupId="simulator">
+<TabItem value="gazebo" label="Gazebo (Easier)" default>
+
+**Pros**: Familiar, lighter weight, easier debugging
+**Cons**: Lower visual fidelity, slower for massive RL
+
+```bash
+# Launch kitchen world with Unitree H1
+ros2 launch humanoid_capstone gazebo_bringup.launch.py
+```
+
+</TabItem>
+<TabItem value="isaac" label="Isaac Sim (Advanced)">
+
+**Pros**: Photorealistic, GPU-accelerated, massive parallelization
+**Cons**: Higher system requirements, steeper learning curve
+
+```bash
+# Launch Isaac Sim with ROS 2 bridge
+./isaac_sim.sh -v --ros2
+```
+
+</TabItem>
+</Tabs>
+
+### Kitchen Scene Setup
+
+**File**: `kitchen_world.sdf` (Gazebo) or `kitchen_scene.usd` (Isaac)
+
+**Required Elements**:
+- Ground plane (10m × 10m)
+- Kitchen table (1.2m × 0.8m × 0.75m high)
+- Red mug (graspable, 0.08m diameter, 0.12m height)
+- Chair (obstacle)
+- Shelves (clutter)
+- Human model (handoff target)
+
+**Robot**: Unitree H1 with:
+- RGB-D camera (mounted on head)
+- 2D LiDAR (for navigation)
+- IMU (balance monitoring)
+- 2-finger gripper (force sensing)
+
+---
+
+## Phase 2: Perception Pipeline (Days 3-5)
+
+### Speech → Text (Whisper)
+
+```python
+#!/usr/bin/env python3
+"""
+Continuous speech recognition with Whisper.
+Publishes transcribed text to /voice_command topic.
+
+Usage: Speak "Go to the kitchen table" → system executes
+"""
+
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import String
+import whisper
+import pyaudio
+import numpy as np
+import threading
+
+
+class WhisperNode(Node):
+    """Real-time speech recognition."""
+
+    def __init__(self):
+        super().__init__('whisper_asr')
+
+        # Publisher
+        self.text_pub = self.create_publisher(String, '/voice_command', 10)
+
+        # Whisper model
+        self.model = whisper.load_model("base")  # or "small", "medium"
+
+        # Audio stream
+        self.audio = pyaudio.PyAudio()
+        self.stream = self.audio.open(
+            format=pyaudio.paFloat32,
+            channels=1,
+            rate=16000,
+            input=True,
+            frames_per_buffer=16000,  # 1 second chunks
+        )
+
+        # Start listening thread
+        self.listening = True
+        self.listen_thread = threading.Thread(target=self.listen_loop)
+        self.listen_thread.start()
+
+        self.get_logger().info('🎤 Whisper ASR ready. Speak now!')
+
+    def listen_loop(self):
+        """Continuous listening loop."""
+        while self.listening and rclpy.ok():
+            # Read audio chunk
+            audio_data = self.stream.read(16000, exception_on_overflow=False)
+            audio_np = np.frombuffer(audio_data, dtype=np.float32)
+
+            # Check if speech present (energy threshold)
+            energy = np.sqrt(np.mean(audio_np ** 2))
+
+            if energy > 0.02:  # Speech detected
+                # Transcribe
+                result = self.model.transcribe(audio_np, language='en', fp16=False)
+                text = result['text'].strip()
+
+                if text:
+                    self.get_logger().info(f'📝 Recognized: "{text}"')
+
+                    # Publish
+                    msg = String()
+                    msg.data = text
+                    self.text_pub.publish(msg)
+
+    def __del__(self):
+        """Cleanup."""
+        self.listening = False
+        if hasattr(self, 'listen_thread'):
+            self.listen_thread.join()
+        if hasattr(self, 'stream'):
+            self.stream.stop_stream()
+            self.stream.close()
+        if hasattr(self, 'audio'):
+            self.audio.terminate()
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = WhisperNode()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+### Vision → Objects (YOLO)
+
+Use Isaac ROS or standard ROS YOLO for object detection:
+
+```bash
+# Terminal 1: Camera publisher (from simulation)
+ros2 run image_tools cam2image
+
+# Terminal 2: YOLO detector
+ros2 launch yolov8_ros yolov8.launch.py
+
+# Terminal 3: Visualize
+ros2 run rqt_image_view rqt_image_view /yolo/image_raw
+```
+
+---
+
+## Phase 3: VLA Integration (Days 6-9)
+
+### Task Planner (GPT-4)
+
+```python
+#!/usr/bin/env python3
+"""
+GPT-4-based VLA task planner.
+Decomposes natural language into executable action primitives.
+
+Integrates: Week 1 (Physical AI), Week 2 (Conversational AI), Week 12 (VLA)
+"""
+
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import String
+from sensor_msgs.msg import Image
+from cv_bridge import CvBridge
+import openai
+import json
+import base64
+import io
+from PIL import Image as PILImage
+
+
+class VLATaskPlanner(Node):
+    """VLA-based high-level task planner."""
+
+    def __init__(self):
+        super().__init__('vla_task_planner')
+
+        # OpenAI API
+        openai.api_key = os.getenv('OPENAI_API_KEY')
+
+        # Subscriptions
+        self.voice_sub = self.create_subscription(String, '/voice_command', self.voice_callback, 10)
+        self.camera_sub = self.create_subscription(Image, '/camera/image_raw', self.camera_callback, 10)
+
+        # Publishers
+        self.action_seq_pub = self.create_publisher(String, '/action_sequence', 10)
+
+        self.bridge = CvBridge()
+        self.latest_image = None
+
+        self.get_logger().info('🧠 VLA Task Planner ready')
+
+    def camera_callback(self, msg):
+        """Store latest camera image."""
+        self.latest_image = self.bridge.imgmsg_to_cv2(msg, 'rgb8')
+
+    def voice_callback(self, msg):
+        """Process voice command with VLA."""
+        task = msg.data
+        self.get_logger().info(f'🎯 Task: "{task}"')
+
+        if self.latest_image is None:
+            self.get_logger().warn('No camera image available')
+            return
+
+        # Generate action sequence
+        actions = self.plan_task(task, self.latest_image)
+
+        # Publish
+        msg_out = String()
+        msg_out.data = json.dumps(actions)
+        self.action_seq_pub.publish(msg_out)
+
+        self.get_logger().info(f'📋 Planned {len(actions)} actions')
+
+    def plan_task(self, task_description, image):
+        """
+        Use GPT-4V (vision) to plan task given image and instruction.
+
+        Returns:
+            List of action dictionaries
+        """
+        # Encode image
+        pil_image = PILImage.fromarray(image)
+        buffer = io.BytesIO()
+        pil_image.save(buffer, format='JPEG')
+        image_b64 = base64.b64encode(buffer.getvalue()).decode()
+
+        # System prompt
+        system_prompt = """You are a humanoid robot control system with these capabilities:
+
+Available Actions:
+1. navigate_to(x, y, theta) - Walk to location (meters, radians)
+2. detect_object(name, color) - Find and localize object
+3. approach_object(object_id, distance) - Move close to object
+4. grasp_object(object_id, grasp_type) - Pick up object
+5. release_object() - Put down object
+6. look_at(direction) - Orient head/camera
+7. say(text) - Speak to human
+
+Scene Understanding:
+- You can see the current camera view
+- Detect objects: table, chair, mug, human, etc.
+- Estimate distances and spatial relationships
+
+Output Format (JSON):
+{
+  "scene_understanding": "describe what you see",
+  "task_breakdown": ["step 1", "step 2", ...],
+  "actions": [
+    {"action": "navigate_to", "params": {"x": 2.0, "y": 0.0, "theta": 0.0}, "reason": "approach table"},
+    ...
+  ]
+}
+
+Be precise. Ensure actions are safe and achievable.
+"""
+
+        # User prompt with vision
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": f"Task: {task_description}\n\nAnalyze the scene and plan the action sequence."},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}
+                    }
+                ]
+            }
+        ]
+
+        # Call GPT-4V
+        response = openai.ChatCompletion.create(
+            model="gpt-4-vision-preview",
+            messages=messages,
+            max_tokens=1500,
+            temperature=0.2
+        )
+
+        # Parse response
+        content = response.choices[0].message.content
+
+        # Extract JSON
+        if "```json" in content:
+            json_str = content.split("```json")[1].split("```")[0].strip()
+        else:
+            json_str = content
+
+        plan = json.loads(json_str)
+
+        self.get_logger().info(f"Scene: {plan['scene_understanding']}")
+
+        return plan['actions']
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = VLATaskPlanner()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+---
+
+## Phase 4: Action Execution (Days 10-14)
+
+### State Machine Executor
+
+```python
+#!/usr/bin/env python3
+"""
+Execute planned action sequences with state machine.
+
+Integrates: Nav2 (Week 8-9), MoveIt (Week 11), Whole-body control (Week 11)
+"""
+
+import rclpy
+from rclpy.node import Node
+from rclpy.action import ActionClient
+from std_msgs.msg import String
+from geometry_msgs.msg import PoseStamped
+from nav2_msgs.action import NavigateToPose
+from moveit_msgs.action import MoveGroup
+import json
+from enum import Enum
+
+
+class TaskState(Enum):
+    IDLE = 0
+    NAVIGATING = 1
+    DETECTING = 2
+    APPROACHING = 3
+    GRASPING = 4
+    RETURNING = 5
+    HANDOFF = 6
+    COMPLETE = 7
+    FAILED = 8
+
+
+class ActionExecutor(Node):
+    """Execute action sequences from VLA planner."""
+
+    def __init__(self):
+        super().__init__('action_executor')
+
+        # Subscribe to action sequences
+        self.action_sub = self.create_subscription(
+            String,
+            '/action_sequence',
+            self.execute_sequence,
+            10
+        )
+
+        # Action clients
+        self.nav_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
+        self.moveit_client = ActionClient(self, MoveGroup, 'move_action')
+
+        # State
+        self.current_state = TaskState.IDLE
+        self.action_queue = []
+
+        self.get_logger().info('⚙️  Action Executor ready')
+
+    def execute_sequence(self, msg):
+        """Parse and execute action sequence."""
+        try:
+            actions = json.loads(msg.data)
+            self.action_queue = actions
+
+            self.get_logger().info(f'Received {len(actions)} actions to execute')
+
+            # Execute sequentially
+            for idx, action in enumerate(actions):
+                self.get_logger().info(f'Executing action {idx+1}/{len(actions)}: {action["action"]}')
+
+                success = self.execute_action(action)
+
+                if not success:
+                    self.get_logger().error(f'Action failed: {action["action"]}')
+                    self.current_state = TaskState.FAILED
+                    return
+
+            self.current_state = TaskState.COMPLETE
+            self.get_logger().info('✅ Task completed successfully!')
+
+        except Exception as e:
+            self.get_logger().error(f'Execution error: {e}')
+            self.current_state = TaskState.FAILED
+
+    def execute_action(self, action):
+        """Execute single primitive action."""
+        action_type = action['action']
+        params = action['params']
+
+        if action_type == 'navigate_to':
+            return self.navigate(params['x'], params['y'], params['theta'])
+
+        elif action_type == 'detect_object':
+            return self.detect_object(params['name'], params.get('color'))
+
+        elif action_type == 'grasp_object':
+            return self.grasp_object(params['object_id'], params['grasp_type'])
+
+        elif action_type == 'release_object':
+            return self.release_object()
+
+        elif action_type == 'say':
+            return self.speak(params['text'])
+
+        else:
+            self.get_logger().error(f'Unknown action: {action_type}')
+            return False
+
+    def navigate(self, x, y, theta):
+        """Navigate to pose using Nav2."""
+        self.current_state = TaskState.NAVIGATING
+
+        goal_msg = NavigateToPose.Goal()
+        goal_msg.pose.header.frame_id = 'map'
+        goal_msg.pose.header.stamp = self.get_clock().now().to_msg()
+        goal_msg.pose.pose.position.x = x
+        goal_msg.pose.pose.position.y = y
+
+        # Quaternion from theta
+        goal_msg.pose.pose.orientation.z = np.sin(theta / 2)
+        goal_msg.pose.pose.orientation.w = np.cos(theta / 2)
+
+        self.get_logger().info(f'Navigating to ({x:.2f}, {y:.2f}, {theta:.2f})')
+
+        # Send goal
+        self.nav_client.wait_for_server()
+        future = self.nav_client.send_goal_async(goal_msg)
+
+        # Wait for result (blocking)
+        rclpy.spin_until_future_complete(self, future)
+
+        goal_handle = future.result()
+        if not goal_handle.accepted:
+            return False
+
+        result_future = goal_handle.get_result_async()
+        rclpy.spin_until_future_complete(self, result_future)
+
+        result = result_future.result()
+
+        success = result.status == 4  # SUCCEEDED
+        self.get_logger().info(f'Navigation {"succeeded" if success else "failed"}')
+
+        return success
+
+    def detect_object(self, object_name, color=None):
+        """Detect object using vision."""
+        self.current_state = TaskState.DETECTING
+
+        # Subscribe to detections (from YOLO)
+        # Match object by name/color
+        # Return object pose
+
+        # Placeholder
+        self.get_logger().info(f'Detecting {color or ""} {object_name}')
+        return True  # Assume success
+
+    def grasp_object(self, object_id, grasp_type):
+        """Plan and execute grasp with MoveIt 2."""
+        self.current_state = TaskState.GRASPING
+
+        # Get object pose (from detection)
+        object_pose = self.get_object_pose(object_id)  # Placeholder
+
+        # Plan grasp approach
+        # Execute arm motion
+        # Close gripper
+        # Verify grasp (force sensor)
+
+        self.get_logger().info(f'Grasping {object_id} with {grasp_type} grasp')
+        return True  # Placeholder
+
+    def release_object(self):
+        """Release grasped object."""
+        # Open gripper
+        self.get_logger().info('Releasing object')
+        return True
+
+    def speak(self, text):
+        """Text-to-speech output."""
+        from gtts import gTTS
+        import os
+
+        tts = gTTS(text=text, lang='en')
+        tts.save('/tmp/speech.mp3')
+
+        os.system('mpg123 /tmp/speech.mp3')
+        os.remove('/tmp/speech.mp3')
+
+        self.get_logger().info(f'🔊 Said: "{text}"')
+        return True
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = ActionExecutor()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+---
+
+## Phase 5: Complete Integration (Days 15-18)
+
+### Master Launch File
+
+```python
+#!/usr/bin/env python3
+"""
+Master launch file for conversational humanoid capstone.
+Launches all nodes in correct order with dependencies.
+"""
+
+from launch import LaunchDescription
+from launch_ros.actions import Node
+from launch.actions import IncludeLaunchDescription, TimerAction
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import PathJoinSubstitution
+from launch_ros.substitutions import FindPackageShare
+
+
+def generate_launch_description():
+
+    # 1. Simulation (Gazebo or Isaac Sim)
+    simulation = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            PathJoinSubstitution([
+                FindPackageShare('humanoid_capstone'),
+                'launch',
+                'gazebo_bringup.launch.py'
+            ])
+        ])
+    )
+
+    # 2. Perception nodes
+    # Whisper ASR
+    whisper_node = Node(
+        package='humanoid_capstone',
+        executable='whisper_node',
+        name='whisper_asr',
+        output='screen'
+    )
+
+    # YOLO object detection
+    yolo_node = Node(
+        package='yolov8_ros',
+        executable='yolov8_node',
+        name='object_detector',
+        remappings=[('/image_raw', '/camera/image_raw')],
+        output='screen'
+    )
+
+    # SLAM
+    slam = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            PathJoinSubstitution([
+                FindPackageShare('slam_toolbox'),
+                'launch',
+                'online_async_launch.py'
+            ])
+        ]),
+        launch_arguments={'use_sim_time': 'true'}.items()
+    )
+
+    # 3. VLA Planner (GPT-4)
+    vla_planner = Node(
+        package='humanoid_capstone',
+        executable='vla_task_planner',
+        name='vla_planner',
+        output='screen',
+        parameters=[{'api_key': os.getenv('OPENAI_API_KEY')}]
+    )
+
+    # 4. Navigation (Nav2)
+    nav2 = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            PathJoinSubstitution([
+                FindPackageShare('nav2_bringup'),
+                'launch',
+                'bringup_launch.py'
+            ])
+        ]),
+        launch_arguments={
+            'use_sim_time': 'true',
+            'params_file': 'humanoid_nav2_params.yaml'
+        }.items()
+    )
+
+    # 5. Manipulation (MoveIt 2)
+    moveit = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            PathJoinSubstitution([
+                FindPackageShare('h1_moveit_config'),
+                'launch',
+                'move_group.launch.py'
+            ])
+        ]),
+        launch_arguments={'use_sim_time': 'true'}.items()
+    )
+
+    # 6. Action Executor
+    executor = Node(
+        package='humanoid_capstone',
+        executable='action_executor',
+        name='action_executor',
+        output='screen'
+    )
+
+    # 7. Safety Monitor
+    safety = Node(
+        package='humanoid_capstone',
+        executable='safety_monitor',
+        name='safety_monitor',
+        output='screen'
+    )
+
+    # 8. RViz
+    rviz = Node(
+        package='rviz2',
+        executable='rviz2',
+        name='rviz2',
+        arguments=['-d', PathJoinSubstitution([
+            FindPackageShare('humanoid_capstone'),
+            'rviz',
+            'capstone.rviz'
+        ])],
+        output='screen'
+    )
+
+    # Launch sequence with delays
+    return LaunchDescription([
+        simulation,
+        TimerAction(period=5.0, actions=[slam]),  # Wait for sim to start
+        TimerAction(period=10.0, actions=[nav2, moveit]),
+        TimerAction(period=15.0, actions=[whisper_node, yolo_node, vla_planner, executor, safety]),
+        TimerAction(period=20.0, actions=[rviz])
+    ])
+```
+
+**Launch**:
+```bash
+ros2 launch humanoid_capstone full_system.launch.py
+```
+
+---
+
+## Evaluation Metrics
+
+### Success Criteria
+
+| Metric | Target | Weight |
+|--------|--------|--------|
+| **Task Success Rate** | ≥80% (40/50 trials) | 40% |
+| **Execution Time** | &lt;90 seconds | 15% |
+| **Code Quality** | Clean, documented, tested | 20% |
+| **System Integration** | All nodes functional | 15% |
+| **Innovation** | Novel features, robustness | 10% |
+
+### Testing Protocol
+
+**50 Trials** with variations:
+- 10 trials: Mug at nominal position (2.0, 0.0, 0.85)
+- 10 trials: Mug offset ±20cm
+- 10 trials: Obstacle in path (chair moved)
+- 10 trials: Noisy speech input (background noise)
+- 10 trials: Poor lighting (test perception robustness)
+
+**Log for Each Trial**:
+- Success/failure (binary)
+- Execution time (seconds)
+- Failure mode (if failed): navigation, detection, grasp, etc.
+- Recovery attempts (if implemented)
+
+### Quantitative Analysis
+
+```python
+#!/usr/bin/env python3
+"""
+Evaluate capstone project performance.
+"""
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+def analyze_results(log_file):
+    """Analyze trial results and generate report."""
+
+    df = pd.read_csv(log_file)
+
+    # Success rate
+    success_rate = df['success'].mean() * 100
+    print(f"Success Rate: {success_rate:.1f}%")
+
+    # Execution time
+    successful_trials = df[df['success'] == True]
+    avg_time = successful_trials['execution_time'].mean()
+    std_time = successful_trials['execution_time'].std()
+    print(f"Avg Execution Time: {avg_time:.1f}s ± {std_time:.1f}s")
+
+    # Failure analysis
+    failures = df[df['success'] == False]
+    failure_modes = failures['failure_mode'].value_counts()
+    print(f"\nFailure Modes:")
+    for mode, count in failure_modes.items():
+        print(f"  {mode}: {count} ({count/len(failures)*100:.1f}%)")
+
+    # Plot
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+    # Success by condition
+    success_by_condition = df.groupby('condition')['success'].mean() * 100
+    success_by_condition.plot(kind='bar', ax=axes[0], color='steelblue')
+    axes[0].set_ylabel('Success Rate (%)')
+    axes[0].set_title('Success Rate by Test Condition')
+    axes[0].axhline(80, color='red', linestyle='--', label='Target (80%)')
+    axes[0].legend()
+
+    # Execution time distribution
+    successful_trials['execution_time'].hist(bins=20, ax=axes[1], color='green', alpha=0.7)
+    axes[1].axvline(90, color='red', linestyle='--', label='Target (90s)')
+    axes[1].set_xlabel('Execution Time (s)')
+    axes[1].set_ylabel('Frequency')
+    axes[1].set_title('Execution Time Distribution')
+    axes[1].legend()
+
+    plt.tight_layout()
+    plt.savefig('capstone_evaluation.png')
+    print("\nPlot saved: capstone_evaluation.png")
+
+
+if __name__ == "__main__":
+    analyze_results('trial_results.csv')
+```
+
+---
+
+## Deliverables
+
+### 1. Code Repository (GitHub/GitLab)
+
+**Structure**:
+```
+humanoid_capstone/
+├── src/
+│   ├── vla_task_planner.py
+│   ├── action_executor.py
+│   ├── whisper_node.py
+│   ├── safety_monitor.py
+│   └── evaluation.py
+├── launch/
+│   ├── gazebo_bringup.launch.py
+│   ├── nav2.launch.py
+│   └── full_system.launch.py
+├── config/
+│   ├── humanoid_nav2_params.yaml
+│   ├── moveit_config.yaml
+│   └── controllers.yaml
+├── urdf/
+│   └── unitree_h1_gazebo.urdf.xacro
+├── worlds/
+│   └── kitchen.sdf
+├── rviz/
+│   └── capstone.rviz
+├── tests/
+│   ├── test_vla_planner.py
+│   └── test_executor.py
+├── docs/
+│   ├── ARCHITECTURE.md
+│   ├── SETUP.md
+│   └── EVALUATION.md
+├── requirements.txt
+├── package.xml
+├── setup.py
+└── README.md
+```
+
+### 2. Documentation (15-20 pages PDF)
+
+**Contents**:
+1. **Introduction** (2 pages)
+   - Project goals and motivation
+   - System overview diagram
+
+2. **Architecture** (4-5 pages)
+   - Node graph with data flows
+   - Detailed component descriptions
+   - Technology choices and justifications
+
+3. **Implementation** (6-8 pages)
+   - Key algorithms (VLA planning, navigation, grasping)
+   - Challenges faced and solutions
+   - Code snippets (annotated)
+
+4. **Evaluation** (3-4 pages)
+   - Test protocol and metrics
+   - Results (tables, plots)
+   - Failure analysis
+   - Performance comparison with baselines
+
+5. **Conclusion** (1-2 pages)
+   - Lessons learned
+   - Future work and improvements
+   - Reflection on course learning
+
+6. **References** (1 page)
+   - Properly cited sources (IEEE format)
+
+### 3. Video Demonstration (5-8 minutes)
+
+**Content**:
+- 0:00-1:00: Introduction and system overview
+- 1:00-4:00: Full task execution (voice → navigation → grasp → deliver)
+- 4:00-6:00: Failure mode and recovery demonstration
+- 6:00-7:00: Performance metrics and evaluation
+- 7:00-8:00: Conclusion and future work
+
+**Upload to**: YouTube (public or unlisted), include link in README
+
+### 4. Live Presentation (15 minutes)
+
+**Structure**:
+- 3 min: Problem statement and approach
+- 5 min: Architecture and key components
+- 5 min: Live demo (or video if live demo fails)
+- 2 min: Q&A
+
+---
+
+## Grading Rubric
+
+### Task Success Rate (40%)
+- **90-100% (A)**: 45-50 successful trials
+- **80-89% (B)**: 40-44 successful
+- **70-79% (C)**: 35-39 successful
+- **60-69% (D)**: 30-34 successful
+- **&lt;60% (F)**: &lt;30 successful
+
+### Execution Time (15%)
+- **&lt;60s (A)**: Excellent efficiency
+- **60-90s (B)**: Good performance
+- **90-120s (C)**: Acceptable
+- **>120s (D/F)**: Too slow
+
+### Code Quality (20%)
+- Documentation (docstrings, comments)
+- Modularity (clean interfaces)
+- ROS 2 best practices
+- Error handling and logging
+- Unit tests (optional, extra credit)
+
+### System Integration (15%)
+- All nodes functional
+- Proper ROS 2 communication
+- Launch files work reliably
+- Configuration management
+
+### Innovation (10%)
+- Additional features (e.g., multi-object, obstacle avoidance)
+- Novel approaches to challenges
+- Performance optimizations
+- Robustness enhancements
+
+---
+
+## Common Pitfalls & Solutions
+
+### Pitfall 1: VLA Overfitting to Prompt
+
+**Problem**: GPT-4 generates same plan regardless of scene.
+
+**Solution**: Include visual context, test with diverse phrasings.
+
+### Pitfall 2: Navigation Failures
+
+**Problem**: Nav2 stuck in oscillations.
+
+**Solution**: Tune recovery behaviors, adjust local planner parameters.
+
+### Pitfall 3: Grasp Failures
+
+**Problem**: Gripper misses object, too much/little force.
+
+**Solution**: Visual servoing (approach in small steps), force feedback.
+
+### Pitfall 4: Timing Issues
+
+**Problem**: Nodes out of sync, stale data.
+
+**Solution**: Use tf2 for temporal consistency, check message timestamps.
+
+### Pitfall 5: Sim-to-Real Gap
+
+**Problem**: Works in sim, fails on real robot.
+
+**Solution**: Domain randomization, test with sensor noise, validate assumptions.
+
+---
+
+## Bonus Challenges (+10% Extra Credit)
+
+1. **Multi-Object**: "Bring me all red objects from the table" (multiple grasps)
+2. **Obstacle Avoidance**: Dynamic obstacles (moving human)
+3. **Failure Recovery**: Automatic retry on grasp failure (up to 3 attempts)
+4. **Bilingual**: Support Urdu voice commands (use Whisper multilingual)
+5. **Real Hardware**: Deploy on actual robot (even partially)
+
+---
+
+## Summary
+
+- **Capstone** integrates 12 weeks: speech, VLA, navigation, manipulation, control, simulation
+- **Architecture**: Perception → VLA planning → Nav2/MoveIt execution → Whole-body control
+- **Technologies**: ROS 2, Gazebo/Isaac, Whisper, GPT-4, Nav2, MoveIt 2
+- **Evaluation**: 50 trials, 80% success rate target, &lt;90s execution time
+- **Deliverables**: Code, documentation, video, presentation
+- **Real-world relevance**: Mirrors industrial humanoid deployments (BMW, Figure AI)
+
+---
+
+## Final Thoughts
+
+Congratulations on reaching the capstone! This project synthesizes:
+- **Week 1-2**: Physical AI foundations, conversational AI
+- **Week 3-5**: ROS 2 (nodes, services, actions, tf2)
+- **Week 6-7**: Simulation (Gazebo, domain randomization)
+- **Week 8-10**: Isaac Sim, GPU acceleration, deep RL
+- **Week 11-12**: Kinematics, locomotion, VLA models
+
+You've learned to build **state-of-the-art Physical AI systems**. The skills you've developed—ROS 2, deep learning, robot control, system integration—are directly applicable to industry and research.
+
+**Next Steps**:
+- Contribute to open-source robotics projects
+- Join robotics competitions (RoboCup, DARPA)
+- Pursue research (graduate school, industry labs)
+- Build your own startup (humanoid robotics market is booming!)
+
+**Good luck with your capstone! 🤖🚀**
+
+---
+
+## References
+
+[1] A. Brohan et al., "RT-2: Vision-Language-Action Models Transfer Web Knowledge to Robotic Control," arXiv:2307.15818, 2023.
+
+[2] Arthur D. Little, "BLUE SHIFT Physical AI," 2025.
+
+[3] China Unicom Research Institute, "Applications and Development Prospects of Humanoid Robots," 2025.
+
+[4] J. Rauf, "Exploring Humanoid Robots 8," OLLI Presentation, 2025.
+
+---
+
+

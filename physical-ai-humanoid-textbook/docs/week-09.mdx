@@ -1,0 +1,904 @@
+---
+id: week-09
+title: Deep RL & Nav2 Integration
+sidebar_label: Deep RL & Nav2
+sidebar_position: 9
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Week 9-10: Deep Reinforcement Learning & Nav2 Integration
+
+## Learning Outcomes
+
+By the end of this module, you will be able to:
+
+1. **Implement** PPO, SAC, and TRPO algorithms for robot control
+2. **Train** locomotion policies in Isaac Sim with 1000+ parallel environments
+3. **Deploy** Nav2 navigation stack for humanoid path planning
+4. **Integrate** learned policies with classical planners
+5. **Evaluate** policy performance with quantitative metrics
+6. **Transfer** policies from simulation to real hardware
+
+---
+
+## 9.1 Deep Reinforcement Learning Fundamentals
+
+### RL Problem Formulation
+
+**Markov Decision Process (MDP)**: $(S, A, P, R, \gamma)$
+
+- **S**: State space (joint angles, velocities, IMU data)
+- **A**: Action space (joint torques or position targets)
+- **P**: Transition dynamics $P(s' | s, a)$
+- **R**: Reward function $R(s, a, s')$
+- **γ**: Discount factor (0 < γ < 1)
+
+**Objective**: Learn policy $\pi(a|s)$ that maximizes expected return:
+
+$$
+J(\pi) = \mathbb{E}_{\tau \sim \pi} \left[ \sum_{t=0}^{\infty} \gamma^t R(s_t, a_t) \right]
+$$
+
+### Policy Gradient Theorem
+
+$$
+\nabla_\theta J(\theta) = \mathbb{E}_{\tau \sim \pi_\theta} \left[ \sum_{t=0}^{T} \nabla_\theta \log \pi_\theta(a_t | s_t) \cdot A_t \right]
+$$
+
+where $A_t$ is the advantage function (how much better action $a_t$ was than expected).
+
+---
+
+## 9.2 PPO: Proximal Policy Optimization
+
+### Algorithm Overview
+
+**PPO** [1] is the most popular RL algorithm for robotics due to:
+- Stable training (clipped objective prevents large updates)
+- Sample efficient
+- Simple to implement
+- Works well with continuous actions
+
+### PPO Objective
+
+$$
+L^{CLIP}(\theta) = \mathbb{E}_t \left[ \min \left( r_t(\theta) \hat{A}_t, \text{clip}(r_t(\theta), 1-\epsilon, 1+\epsilon) \hat{A}_t \right) \right]
+$$
+
+where:
+- $r_t(\theta) = \frac{\pi_\theta(a_t|s_t)}{\pi_{\theta_{old}}(a_t|s_t)}$ (probability ratio)
+- $\epsilon$ = clip range (typically 0.2)
+- $\hat{A}_t$ = advantage estimate
+
+**Clipping** prevents policy from changing too much in one update.
+
+### PPO Implementation
+
+```python
+#!/usr/bin/env python3
+"""
+PPO implementation for humanoid locomotion.
+
+Reference: Schulman et al., "Proximal Policy Optimization," arXiv:1707.06347, 2017
+"""
+
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.distributions import Normal
+import numpy as np
+
+
+class ActorCritic(nn.Module):
+    """Actor-Critic network for PPO."""
+
+    def __init__(self, obs_dim, act_dim):
+        super().__init__()
+
+        # Shared feature extractor
+        self.features = nn.Sequential(
+            nn.Linear(obs_dim, 256),
+            nn.ELU(),
+            nn.Linear(256, 128),
+            nn.ELU()
+        )
+
+        # Actor (policy)
+        self.actor_mean = nn.Linear(128, act_dim)
+        self.actor_logstd = nn.Parameter(torch.zeros(act_dim))
+
+        # Critic (value function)
+        self.critic = nn.Linear(128, 1)
+
+    def forward(self, obs):
+        """Forward pass."""
+        features = self.features(obs)
+
+        # Actor outputs
+        action_mean = self.actor_mean(features)
+        action_std = torch.exp(self.actor_logstd)
+
+        # Critic output
+        value = self.critic(features)
+
+        return action_mean, action_std, value
+
+    def get_action(self, obs, deterministic=False):
+        """Sample action from policy."""
+        action_mean, action_std, value = self.forward(obs)
+
+        if deterministic:
+            return action_mean, value
+
+        # Sample from Gaussian
+        dist = Normal(action_mean, action_std)
+        action = dist.sample()
+        log_prob = dist.log_prob(action).sum(dim=-1)
+
+        return action, log_prob, value
+
+
+class PPO:
+    """PPO algorithm."""
+
+    def __init__(self, obs_dim, act_dim, lr=3e-4, gamma=0.99, clip_range=0.2):
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        self.model = ActorCritic(obs_dim, act_dim).to(self.device)
+        self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
+
+        self.gamma = gamma
+        self.clip_range = clip_range
+
+    def compute_returns(self, rewards, values, dones):
+        """Compute discounted returns and advantages (GAE)."""
+        returns = []
+        advantages = []
+
+        gae = 0
+        next_value = 0
+
+        for step in reversed(range(len(rewards))):
+            if dones[step]:
+                next_value = 0
+                gae = 0
+
+            delta = rewards[step] + self.gamma * next_value - values[step]
+            gae = delta + self.gamma * 0.95 * gae  # GAE(λ=0.95)
+
+            returns.insert(0, gae + values[step])
+            advantages.insert(0, gae)
+
+            next_value = values[step]
+
+        returns = torch.tensor(returns, device=self.device)
+        advantages = torch.tensor(advantages, device=self.device)
+
+        # Normalize advantages
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+
+        return returns, advantages
+
+    def update(self, obs, actions, old_log_probs, returns, advantages):
+        """PPO update step."""
+
+        # Get current policy outputs
+        action_mean, action_std, values = self.model(obs)
+
+        # Compute current log probs
+        dist = Normal(action_mean, action_std)
+        log_probs = dist.log_prob(actions).sum(dim=-1)
+
+        # Ratio
+        ratio = torch.exp(log_probs - old_log_probs)
+
+        # Clipped objective
+        policy_loss_1 = ratio * advantages
+        policy_loss_2 = torch.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range) * advantages
+        policy_loss = -torch.min(policy_loss_1, policy_loss_2).mean()
+
+        # Value loss
+        value_loss = nn.MSELoss()(values.squeeze(), returns)
+
+        # Entropy bonus (encourage exploration)
+        entropy = dist.entropy().mean()
+
+        # Total loss
+        loss = policy_loss + 0.5 * value_loss - 0.01 * entropy
+
+        # Optimize
+        self.optimizer.zero_grad()
+        loss.backward()
+        nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
+        self.optimizer.step()
+
+        return {
+            'policy_loss': policy_loss.item(),
+            'value_loss': value_loss.item(),
+            'entropy': entropy.item()
+        }
+
+
+# Training loop
+def train_humanoid_walk(num_envs=4096, total_steps=10_000_000):
+    """Train humanoid walking with PPO."""
+    from vectorized_env import VectorizedHumanoidEnv  # From previous section
+
+    env = VectorizedHumanoidEnv(num_envs=num_envs)
+    ppo = PPO(obs_dim=66, act_dim=19)
+
+    obs = env.reset()
+    episode_rewards = []
+    step = 0
+
+    while step < total_steps:
+        # Collect rollout (2048 steps)
+        rollout_obs = []
+        rollout_actions = []
+        rollout_log_probs = []
+        rollout_values = []
+        rollout_rewards = []
+        rollout_dones = []
+
+        for _ in range(2048):
+            # Get action
+            with torch.no_grad():
+                obs_tensor = torch.tensor(obs, device=ppo.device)
+                action, log_prob, value = ppo.model.get_action(obs_tensor)
+
+            # Step environment
+            next_obs, reward, done, _, _ = env.step(action.cpu().numpy())
+
+            # Store transition
+            rollout_obs.append(obs)
+            rollout_actions.append(action.cpu().numpy())
+            rollout_log_probs.append(log_prob.cpu().numpy())
+            rollout_values.append(value.cpu().numpy())
+            rollout_rewards.append(reward)
+            rollout_dones.append(done)
+
+            obs = next_obs
+            step += num_envs
+
+        # Compute returns and advantages
+        returns, advantages = ppo.compute_returns(
+            rollout_rewards,
+            rollout_values,
+            rollout_dones
+        )
+
+        # PPO update (8 epochs)
+        for epoch in range(8):
+            metrics = ppo.update(
+                torch.tensor(rollout_obs, device=ppo.device),
+                torch.tensor(rollout_actions, device=ppo.device),
+                torch.tensor(rollout_log_probs, device=ppo.device),
+                returns,
+                advantages
+            )
+
+        # Log progress
+        avg_reward = np.mean(rollout_rewards)
+        print(f"Step {step}/{total_steps} | Reward: {avg_reward:.2f} | "
+              f"Policy Loss: {metrics['policy_loss']:.4f}")
+
+        episode_rewards.append(avg_reward)
+
+        # Save checkpoint every 1M steps
+        if step % 1_000_000 == 0:
+            torch.save(ppo.model.state_dict(), f"ppo_humanoid_{step}.pth")
+
+    env.close()
+
+
+if __name__ == "__main__":
+    train_humanoid_walk()
+```
+
+---
+
+## 9.3 Nav2: Navigation Stack
+
+### Architecture
+
+```
+[SLAM] → /map
+           ↓
+[Global Planner] → /plan (path)
+           ↓
+[Local Planner] → /cmd_vel
+           ↓
+     [Robot Controller]
+           ↓
+      [Odometry] → /odom → [SLAM]
+```
+
+**Figure 9.1**: Nav2 architecture. SLAM builds map, global planner computes path, local planner generates velocity commands.
+
+### Nav2 for Humanoids
+
+**Challenges**:
+1. **Narrow footprint**: Requires precise path following
+2. **Slow speed**: 0.5-1.5 m/s (vs. 3+ m/s for wheeled)
+3. **Stability**: Lateral acceleration limits
+4. **Step constraints**: Cannot turn in place easily
+
+### Configuration
+
+```yaml
+# humanoid_nav2_params.yaml (extended from Week 6)
+
+controller_server:
+  ros__parameters:
+    controller_frequency: 20.0
+
+    FollowPath:
+      plugin: "dwb_core::DWBLocalPlanner"
+
+      # Velocity constraints for bipedal stability
+      min_vel_x: 0.1  # Minimum forward speed
+      max_vel_x: 0.8
+      min_vel_y: -0.1  # Limited lateral
+      max_vel_y: 0.1
+      max_vel_theta: 0.6  # Slow turning
+
+      # Acceleration limits (prevent tipping)
+      acc_lim_x: 0.5
+      acc_lim_y: 0.3
+      acc_lim_theta: 0.8
+
+      # Footprint (bipedal)
+      footprint: "[ [0.15, 0.08], [0.15, -0.08], [-0.15, -0.08], [-0.15, 0.08] ]"
+
+      # Trajectory generation
+      sim_time: 2.0  # Longer lookahead for stability
+      vx_samples: 15
+      vy_samples: 5  # Fewer lateral samples
+      vtheta_samples: 15
+
+      # Critics (cost functions)
+      critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist", "TwirlingCritic"]
+
+      TwirlingCritic:  # Penalize excessive rotation
+        scale: 10.0
+
+planner_server:
+  ros__parameters:
+    expected_planner_frequency: 10.0
+    planner_plugins: ["GridBased"]
+
+    GridBased:
+      plugin: "nav2_navfn_planner/NavfnPlanner"
+      tolerance: 0.5
+      use_astar: True  # A* search
+      allow_unknown: False
+
+recoveries_server:
+  ros__parameters:
+    costmap_topic: local_costmap/costmap_raw
+    footprint_topic: local_costmap/published_footprint
+    cycle_frequency: 10.0
+    recovery_plugins: ["spin", "backup", "wait"]
+
+    spin:
+      plugin: "nav2_recoveries/Spin"
+      max_rotational_vel: 0.5  # Slow spinning for humanoid
+      min_rotational_vel: 0.2
+      rotational_acc_lim: 0.5
+
+    backup:
+      plugin: "nav2_recoveries/BackUp"
+      backup_dist: -0.3  # 30cm backward
+      backup_speed: 0.15
+
+    wait:
+      plugin: "nav2_recoveries/Wait"
+      wait_duration: 5
+```
+
+---
+
+## 9.4 Learned Locomotion Policy
+
+### Training Walking Controller
+
+```python
+#!/usr/bin/env python3
+"""
+Train humanoid walking policy with PPO in Isaac Sim.
+Reward: Forward velocity, balance, energy efficiency.
+"""
+
+from isaacsim import SimulationApp
+simulation_app = SimulationApp({"headless": True})
+
+import torch
+import numpy as np
+from omni.isaac.core import World
+from omni.isaac.gym.vec_env import VecEnvBase
+
+
+class HumanoidLocomotionEnv(VecEnvBase):
+    """Vectorized environment for humanoid walking."""
+
+    def __init__(self, num_envs=2048):
+        self.num_envs = num_envs
+        self.device = "cuda:0"
+
+        # Observation: joint pos (19) + vel (19) + IMU (6) + target vel (2) = 46
+        # Action: joint position deltas (19 leg/torso joints)
+        super().__init__(
+            num_envs=num_envs,
+            num_obs=46,
+            num_actions=19,
+            device=self.device
+        )
+
+        self.world = World(backend="torch", device=self.device)
+        self._create_envs()
+
+        # PD controller gains
+        self.kp = torch.tensor([100.0] * 19, device=self.device)
+        self.kd = torch.tensor([10.0] * 19, device=self.device)
+
+        # Target velocity (randomized per env)
+        self.target_vx = torch.zeros(num_envs, device=self.device)
+
+        # Episode tracking
+        self.episode_length = torch.zeros(num_envs, device=self.device)
+        self.max_episode_length = 500  # 5 sec at 100 Hz
+
+    def _create_envs(self):
+        """Spawn humanoids in grid."""
+        # Implementation from Week 8...
+        pass
+
+    def reset(self):
+        """Reset all environments."""
+        self.episode_length.zero_()
+
+        # Randomize target velocities
+        self.target_vx = torch.rand(self.num_envs, device=self.device) * 2.0  # 0-2 m/s
+
+        # Reset robots to standing pose
+        for i in range(self.num_envs):
+            robot = self.world.scene.get_object(f"/World/H1_{i}")
+            robot.set_world_pose(position=[0, 0, 1.0])
+
+            # Neutral standing pose
+            standing_pose = torch.zeros(19, device=self.device)
+            standing_pose[1] = 0.3  # Slight knee bend
+            standing_pose[4] = 0.3
+
+            robot.set_joint_positions(standing_pose)
+            robot.set_joint_velocities(torch.zeros(19, device=self.device))
+
+        return self._get_obs()
+
+    def step(self, actions):
+        """Execute actions with PD control."""
+        # Clip actions
+        actions = torch.clamp(actions, -1.0, 1.0)
+
+        # Convert to joint targets (current + delta)
+        for i in range(self.num_envs):
+            robot = self.world.scene.get_object(f"/World/H1_{i}")
+
+            current_pos = robot.get_joint_positions()
+            target_pos = current_pos + 0.1 * actions[i]  # Small delta
+
+            # PD control
+            current_vel = robot.get_joint_velocities()
+            error = target_pos - current_pos
+            torques = self.kp * error - self.kd * current_vel
+
+            robot.set_joint_efforts(torques)
+
+        # Step physics
+        self.world.step(render=False)
+
+        # Get observations
+        obs = self._get_obs()
+
+        # Compute rewards
+        rewards = self._compute_rewards()
+
+        # Check termination
+        dones = self._check_dones()
+
+        self.episode_length += 1
+
+        # Reset done environments
+        reset_ids = torch.where(dones)[0]
+        if len(reset_ids) > 0:
+            self._reset_envs(reset_ids)
+
+        return obs, rewards, dones, {}
+
+    def _get_obs(self):
+        """Get observations from all robots."""
+        obs = torch.zeros((self.num_envs, 46), device=self.device)
+
+        for i in range(self.num_envs):
+            robot = self.world.scene.get_object(f"/World/H1_{i}")
+
+            joint_pos = robot.get_joint_positions()[:19]  # Legs + torso
+            joint_vel = robot.get_joint_velocities()[:19]
+
+            # IMU (linear + angular velocity)
+            lin_vel = robot.get_linear_velocity()
+            ang_vel = robot.get_angular_velocity()
+
+            # Target velocity
+            target = torch.tensor([self.target_vx[i], 0.0], device=self.device)
+
+            obs[i] = torch.cat([joint_pos, joint_vel, lin_vel, ang_vel, target])
+
+        return obs
+
+    def _compute_rewards(self):
+        """Reward function."""
+        rewards = torch.zeros(self.num_envs, device=self.device)
+
+        for i in range(self.num_envs):
+            robot = self.world.scene.get_object(f"/World/H1_{i}")
+
+            # Forward velocity reward
+            lin_vel = robot.get_linear_velocity()
+            vx = lin_vel[0]
+            vel_reward = -torch.abs(vx - self.target_vx[i])  # Match target
+
+            # Balance reward (upright orientation)
+            _, quat = robot.get_world_pose()
+            # Quaternion to up vector
+            up_vec = torch.tensor([
+                2 * (quat[1] * quat[3] + quat[0] * quat[2]),
+                2 * (quat[2] * quat[3] - quat[0] * quat[1]),
+                1 - 2 * (quat[1]**2 + quat[2]**2)
+            ], device=self.device)
+            upright_reward = up_vec[2]  # Dot product with [0,0,1]
+
+            # Energy penalty
+            joint_vels = robot.get_joint_velocities()[:19]
+            energy_penalty = -0.01 * torch.norm(joint_vels)
+
+            rewards[i] = vel_reward + 0.5 * upright_reward + energy_penalty
+
+        return rewards
+
+    def _check_dones(self):
+        """Check termination conditions."""
+        dones = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+
+        for i in range(self.num_envs):
+            robot = self.world.scene.get_object(f"/World/H1_{i}")
+            pos, _ = robot.get_world_pose()
+
+            # Terminate if fallen or max length
+            if pos[2] < 0.5 or self.episode_length[i] >= self.max_episode_length:
+                dones[i] = True
+
+        return dones
+
+    def _reset_envs(self, indices):
+        """Reset specific environments."""
+        for idx in indices:
+            i = idx.item()
+            robot = self.world.scene.get_object(f"/World/H1_{i}")
+            robot.set_world_pose(position=[0, 0, 1.0])
+
+            standing_pose = torch.zeros(19, device=self.device)
+            standing_pose[1] = 0.3  # Knees
+            standing_pose[4] = 0.3
+
+            robot.set_joint_positions(standing_pose)
+            robot.set_joint_velocities(torch.zeros(19, device=self.device))
+
+            self.episode_length[i] = 0
+
+            # New target velocity
+            self.target_vx[i] = torch.rand(1, device=self.device).item() * 2.0
+
+
+# Train
+if __name__ == "__main__":
+    env = HumanoidLocomotionEnv(num_envs=2048)
+
+    # Use rl_games or rsl_rl for training
+    from stable_baselines3 import PPO as SB3_PPO
+
+    model = SB3_PPO("MlpPolicy", env, verbose=1, device="cuda")
+    model.learn(total_timesteps=10_000_000)
+    model.save("humanoid_walk_policy_10M")
+
+    simulation_app.close()
+```
+
+**Training Time**: 2-3 hours on RTX 4090 for 10M samples.
+
+---
+
+## 9.5 Hybrid: RL + Nav2
+
+### Hierarchical Control
+
+Combine learned low-level controller with Nav2 high-level planner:
+
+```
+[Nav2 Global Planner] → waypoints
+           ↓
+[RL Locomotion Policy] → joint commands
+           ↓
+    [Hardware/Sim]
+```
+
+**Advantages**:
+- Nav2: Long-horizon planning, obstacle avoidance
+- RL: Adaptive gaits, rough terrain
+
+### Integration Node
+
+```python
+#!/usr/bin/env python3
+"""
+Hybrid controller: Nav2 + learned walking policy.
+Nav2 provides waypoints, RL policy executes locomotion.
+"""
+
+import rclpy
+from rclpy.node import Node
+from geometry_msgs.msg import PoseStamped, Twist
+from nav_msgs.msg import Path
+import torch
+import numpy as np
+
+
+class HybridController(Node):
+    """Combine Nav2 planning with RL locomotion."""
+
+    def __init__(self):
+        super().__init__('hybrid_controller')
+
+        # Subscribe to Nav2 plan
+        self.plan_sub = self.create_subscription(
+            Path,
+            '/plan',
+            self.plan_callback,
+            10
+        )
+
+        # Publish velocity commands to RL policy
+        self.vel_pub = self.create_publisher(
+            Twist,
+            '/target_velocity',
+            10
+        )
+
+        # Current plan
+        self.current_plan = None
+        self.current_waypoint_idx = 0
+
+        # Load trained RL policy
+        self.policy = self.load_policy("humanoid_walk_policy_10M.pth")
+
+        # Timer: Update at 20 Hz
+        self.timer = self.create_timer(0.05, self.control_loop)
+
+        self.get_logger().info('Hybrid controller ready')
+
+    def load_policy(self, path):
+        """Load trained PyTorch policy."""
+        from ppo_model import ActorCritic  # From previous section
+
+        model = ActorCritic(obs_dim=46, act_dim=19)
+        model.load_state_dict(torch.load(path))
+        model.eval()
+        model.to("cuda")
+
+        return model
+
+    def plan_callback(self, msg):
+        """Receive new plan from Nav2."""
+        self.current_plan = msg
+        self.current_waypoint_idx = 0
+        self.get_logger().info(f'Received plan with {len(msg.poses)} waypoints')
+
+    def control_loop(self):
+        """Main control loop."""
+        if self.current_plan is None:
+            return
+
+        # Get current waypoint
+        if self.current_waypoint_idx >= len(self.current_plan.poses):
+            self.get_logger().info('Goal reached!')
+            return
+
+        waypoint = self.current_plan.poses[self.current_waypoint_idx]
+
+        # Compute desired velocity toward waypoint
+        # (Simplified - real would use current pose from odometry)
+        desired_vx = 0.8  # Forward speed
+        desired_vy = 0.0
+        desired_wz = 0.0  # Computed from heading error
+
+        # Publish target velocity for RL policy
+        cmd = Twist()
+        cmd.linear.x = desired_vx
+        cmd.linear.y = desired_vy
+        cmd.angular.z = desired_wz
+
+        self.vel_pub.publish(cmd)
+
+        # Check if waypoint reached (placeholder)
+        # Real implementation: compute distance, update index
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = HybridController()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+---
+
+## 9.6 Policy Evaluation Metrics
+
+### Quantitative Metrics
+
+1. **Success Rate**: % of episodes reaching goal
+2. **Episode Length**: Steps to completion
+3. **Average Reward**: Per-episode cumulative reward
+4. **Forward Velocity**: Mean speed (m/s)
+5. **Energy Efficiency**: Total torque magnitude
+6. **Robustness**: Success under perturbations (pushes)
+
+### Evaluation Script
+
+```python
+def evaluate_policy(policy, env, num_episodes=100):
+    """Evaluate trained policy."""
+
+    success_count = 0
+    episode_lengths = []
+    episode_rewards = []
+    forward_velocities = []
+
+    for ep in range(num_episodes):
+        obs = env.reset()
+        done = False
+        episode_reward = 0
+        episode_length = 0
+        velocities = []
+
+        while not done and episode_length < 500:
+            # Get action from policy
+            with torch.no_grad():
+                action, _, _ = policy.get_action(obs, deterministic=True)
+
+            # Step
+            obs, reward, done, info = env.step(action)
+
+            episode_reward += reward
+            episode_length += 1
+
+            # Track velocity
+            velocities.append(info.get('forward_velocity', 0.0))
+
+        # Metrics
+        if info.get('goal_reached', False):
+            success_count += 1
+
+        episode_lengths.append(episode_length)
+        episode_rewards.append(episode_reward)
+        forward_velocities.append(np.mean(velocities))
+
+    # Report
+    print(f"\n=== Evaluation Results ({num_episodes} episodes) ===")
+    print(f"Success Rate: {success_count / num_episodes * 100:.1f}%")
+    print(f"Avg Episode Length: {np.mean(episode_lengths):.1f} steps")
+    print(f"Avg Reward: {np.mean(episode_rewards):.2f}")
+    print(f"Avg Forward Velocity: {np.mean(forward_velocities):.3f} m/s")
+
+    return {
+        'success_rate': success_count / num_episodes,
+        'avg_length': np.mean(episode_lengths),
+        'avg_reward': np.mean(episode_rewards),
+        'avg_velocity': np.mean(forward_velocities)
+    }
+```
+
+---
+
+## Exercises
+
+### Basic (40%)
+1. **Implement** a simple reward function for reaching a target (x, y) position. Test in a 2D point mass environment.
+
+2. **Train** a policy for a 2-joint planar arm to reach random targets. Use PPO with 10 parallel environments. Train for 50k steps.
+
+3. **Configure** Nav2 for a humanoid with footprint 0.2m x 0.15m. Test navigation in Isaac Sim kitchen scene (10 trials). Report success rate.
+
+### Intermediate (40%)
+4. **Compare** PPO vs. SAC for humanoid walking:
+   - Train both for 5M steps
+   - Evaluate on 100 episodes
+   - Metrics: Success rate, avg velocity, sample efficiency
+   - Plot learning curves
+
+5. **Implement** curriculum learning:
+   - Level 1: Flat terrain, low speed (0.5 m/s)
+   - Level 2: Flat terrain, high speed (1.5 m/s)
+   - Level 3: Slopes (±10 degrees)
+   - Level 4: Stairs
+   Automatically progress when success rate >80%.
+
+6. **Integrate** Nav2 with a trained walking policy:
+   - Nav2 plans path
+   - RL policy executes locomotion
+   - Test in cluttered environment (navigate around 10 obstacles)
+
+### Advanced (20%)
+7. **Adversarial RL**: Train a humanoid to resist pushes:
+   - Apply random forces (10-50N) every 1-2 seconds
+   - Reward: Staying upright, recovering balance
+   - Train for 10M steps
+   - Demonstrate robustness with 20 random pushes
+
+8. **Sim-to-Real Study**:
+   - Train policy in Isaac Sim with domain randomization
+   - Identify 5 key parameters to randomize (mass, friction, latency, etc.)
+   - Measure sensitivity to each parameter
+   - Propose optimal randomization ranges
+
+9. **Capstone Integration**:
+   - Train a walking policy for your Week 13 project
+   - Goal: Walk 5m in &lt;10 seconds, no falls
+   - Integrate with Nav2 for waypoint following
+   - Submit: Trained policy (.pth), eval results, video
+
+---
+
+## Further Reading
+
+- **PPO Paper**: Schulman et al., "Proximal Policy Optimization," arXiv:1707.06347, 2017
+- **Isaac Gym**: Makoviychuk et al., "Isaac Gym: High Performance GPU-Based Physics Simulation," NeurIPS 2021
+- **Nav2 Docs**: https://navigation.ros.org/
+- **Stable-Baselines3**: https://stable-baselines3.readthedocs.io/
+
+---
+
+## Summary
+
+- **PPO** is the standard RL algorithm for robotics (stable, sample-efficient)
+- **Isaac Sim** enables 1000s of parallel environments for fast training
+- **Reward shaping** is critical: balance multiple objectives (speed, stability, energy)
+- **Nav2** provides robust path planning for humanoid navigation
+- **Hybrid approaches** combine learned low-level control with classical high-level planning
+- **Evaluation**: Success rate, velocity, robustness, energy efficiency
+- **Performance**: 2048 envs on RTX 4090 → 10M samples in 2-3 hours
+
+**Next**: [Week 11-12: Humanoid Kinematics & VLA](./week-11)
+
+---
+
+## References
+
+[1] J. Schulman et al., "Proximal Policy Optimization Algorithms," arXiv:1707.06347, 2017.
+
+[2] China Unicom Research Institute, "Applications and Development Prospects of Humanoid Robots," 2025, p. 78.
+
+[3] S. Macenski et al., "The Marathon 2: A Navigation System," *IROS*, 2020.
+
+[4] V. Makoviychuk et al., "Isaac Gym: High Performance GPU-Based Physics Simulation for Robot Learning," *NeurIPS*, 2021.
+
+---
+
+

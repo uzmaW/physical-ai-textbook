@@ -1,0 +1,9 @@
+- table:
+    name: users
+    schema: auth
+- table:
+    name: conversations
+    schema: public
+- table:
+    name: messages
+    schema: public

@@ -1,0 +1,988 @@
+---
+id: week-07
+title: Advanced Gazebo & Domain Randomization
+sidebar_label: Domain Randomization & Sim-to-Real
+sidebar_position: 7
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Week 7: Advanced Gazebo & Domain Randomization
+
+## Learning Outcomes
+
+By the end of this module, you will be able to:
+
+1. **Create** custom Gazebo plugins for sensors and actuators
+2. **Implement** domain randomization for robust policy learning
+3. **Configure** realistic contact dynamics and material properties
+4. **Record** and replay simulation data with rosbag2
+5. **Benchmark** simulation performance and optimize for speed
+6. **Prepare** simulation environments for RL training
+
+---
+
+## 7.1 Custom Gazebo Plugins
+
+### Plugin Architecture
+
+Gazebo plugins extend functionality without modifying core code [1].
+
+**Types**:
+- **World plugins**: Modify physics, environment
+- **Model plugins**: Affect specific models (robots)
+- **Sensor plugins**: Process sensor data
+- **Visual plugins**: Rendering effects
+- **System plugins**: GUI extensions
+
+### World Plugin Example
+
+```cpp
+// DomainRandomizerPlugin.cpp
+#include <gazebo/gazebo.hh>
+#include <gazebo/physics/physics.hh>
+#include <random>
+
+namespace gazebo
+{
+  class DomainRandomizerPlugin : public WorldPlugin
+  {
+  public:
+    void Load(physics::WorldPtr _world, sdf::ElementPtr _sdf) override
+    {
+      this->world = _world;
+
+      // Random number generator
+      std::random_device rd;
+      this->rng = std::mt19937(rd());
+
+      // Randomize on startup
+      this->RandomizePhysics();
+
+      // Randomize every reset
+      this->updateConnection = event::Events::ConnectWorldUpdateBegin(
+        std::bind(&DomainRandomizerPlugin::OnUpdate, this));
+
+      gzdbg << "Domain Randomizer Plugin loaded\n";
+    }
+
+    void OnUpdate()
+    {
+      // Check if world was reset
+      if (this->world->SimTime().Double() < 0.1) {
+        this->RandomizePhysics();
+      }
+    }
+
+    void RandomizePhysics()
+    {
+      // Randomize gravity
+      std::uniform_real_distribution<double> gravity_dist(-10.0, -9.5);
+      double gravity = gravity_dist(this->rng);
+      this->world->SetGravity(ignition::math::Vector3d(0, 0, gravity));
+
+      gzdbg << "Randomized gravity: " << gravity << "\n";
+
+      // Randomize friction for all models
+      for (auto model : this->world->Models()) {
+        for (auto link : model->GetLinks()) {
+          for (auto collision : link->GetCollisions()) {
+            std::uniform_real_distribution<double> friction_dist(0.5, 1.5);
+            double mu1 = friction_dist(this->rng);
+            double mu2 = friction_dist(this->rng);
+
+            collision->GetSurface()->FrictionPyramid()->SetMuPrimary(mu1);
+            collision->GetSurface()->FrictionPyramid()->SetMuSecondary(mu2);
+          }
+        }
+      }
+
+      // Randomize object positions
+      std::uniform_real_distribution<double> pos_dist(-1.0, 1.0);
+      auto mug = this->world->ModelByName("red_mug");
+      if (mug) {
+        double x = 2.0 + pos_dist(this->rng) * 0.2;  // ±20cm
+        double y = pos_dist(this->rng) * 0.2;
+        ignition::math::Pose3d pose(x, y, 0.85, 0, 0, 0);
+        mug->SetWorldPose(pose);
+
+        gzdbg << "Randomized mug position: (" << x << ", " << y << ")\n";
+      }
+    }
+
+  private:
+    physics::WorldPtr world;
+    event::ConnectionPtr updateConnection;
+    std::mt19937 rng;
+  };
+
+  GZ_REGISTER_WORLD_PLUGIN(DomainRandomizerPlugin)
+}
+```
+
+**Add to world SDF**:
+```xml
+<world name="kitchen_world">
+  <plugin name="domain_randomizer" filename="libDomainRandomizerPlugin.so"/>
+  <!-- ... rest of world ... -->
+</world>
+```
+
+---
+
+## 7.2 Domain Randomization for Sim-to-Real
+
+### Why Randomize?
+
+**Problem**: Policies trained in simulation fail in reality due to:
+- Exact physics parameters unknown (friction, mass, inertia)
+- Sensor noise absent in perfect simulation
+- Environmental variability (lighting, textures)
+
+**Solution**: Train on *distribution* of environments [2].
+
+> **Arthur D. Little (2025)**: "Domain randomization increases sim-to-real success rates from 30% to 70-90% by exposing policies to variability during training, enabling robust generalization." [3, p. 15]
+
+### Randomization Categories
+
+#### 1. Physics Randomization
+
+```python
+import random
+
+def randomize_physics(world):
+    """Randomize physics parameters."""
+
+    # Gravity (Earth: -9.81 ± 0.3 m/s²)
+    gravity = random.uniform(-10.1, -9.5)
+    world.set_gravity([0, 0, gravity])
+
+    # Friction (μ = 0.6-1.4)
+    for model in world.get_models():
+        for link in model.get_links():
+            mu1 = random.uniform(0.6, 1.4)
+            mu2 = random.uniform(0.6, 1.4)
+            link.set_friction(mu1, mu2)
+
+    # Air resistance (subtle effect)
+    air_density = random.uniform(1.0, 1.3)  # kg/m³
+    world.set_air_density(air_density)
+```
+
+#### 2. Robot Randomization
+
+```python
+def randomize_robot(robot):
+    """Randomize robot parameters."""
+
+    # Link masses (±20%)
+    for link in robot.get_links():
+        nominal_mass = link.get_nominal_mass()
+        mass = nominal_mass * random.uniform(0.8, 1.2)
+        link.set_mass(mass)
+
+    # Joint damping (±30%)
+    for joint in robot.get_joints():
+        nominal_damping = joint.get_nominal_damping()
+        damping = nominal_damping * random.uniform(0.7, 1.3)
+        joint.set_damping(damping)
+
+    # Actuator strength (±15%)
+    for joint in robot.get_joints():
+        nominal_effort = joint.get_max_effort()
+        effort = nominal_effort * random.uniform(0.85, 1.15)
+        joint.set_max_effort(effort)
+
+    # Motor time constant (response lag)
+    for joint in robot.get_joints():
+        tau = random.uniform(0.0, 0.01)  # 0-10ms delay
+        joint.set_motor_time_constant(tau)
+```
+
+#### 3. Sensor Randomization
+
+```python
+def randomize_sensors(robot):
+    """Add realistic sensor noise."""
+
+    for sensor in robot.get_sensors():
+        if sensor.type == 'camera':
+            # Image noise
+            noise_std = random.uniform(0.0, 0.02)  # 0-2% per pixel
+            sensor.set_image_noise(noise_std)
+
+            # Motion blur
+            if random.random() < 0.3:  # 30% chance
+                sensor.enable_motion_blur(True)
+
+        elif sensor.type == 'imu':
+            # Accelerometer bias
+            accel_bias = [random.uniform(-0.1, 0.1) for _ in range(3)]
+            sensor.set_accel_bias(accel_bias)
+
+            # Gyroscope bias
+            gyro_bias = [random.uniform(-0.01, 0.01) for _ in range(3)]
+            sensor.set_gyro_bias(gyro_bias)
+
+            # Noise
+            accel_noise = random.uniform(0.01, 0.05)
+            gyro_noise = random.uniform(0.001, 0.005)
+            sensor.set_noise(accel_noise, gyro_noise)
+
+        elif sensor.type == 'lidar':
+            # Range noise
+            range_noise = random.uniform(0.01, 0.05)  # 1-5cm
+            sensor.set_range_noise(range_noise)
+
+            # Dropout (missing rays)
+            dropout_rate = random.uniform(0.0, 0.05)  # 0-5%
+            sensor.set_dropout_rate(dropout_rate)
+```
+
+#### 4. Visual Randomization
+
+```python
+def randomize_visuals(world):
+    """Randomize lighting, textures, colors."""
+
+    # Lighting
+    for light in world.get_lights():
+        # Intensity (50-150% of nominal)
+        intensity = light.get_nominal_intensity() * random.uniform(0.5, 1.5)
+        light.set_intensity(intensity)
+
+        # Color temperature
+        if random.random() < 0.5:
+            # Warm (yellowish)
+            light.set_color([1.0, 0.9, 0.7])
+        else:
+            # Cool (bluish)
+            light.set_color([0.8, 0.9, 1.0])
+
+    # Object colors
+    for model in world.get_models():
+        if model.name.startswith('object_'):
+            # Random color
+            r = random.uniform(0.0, 1.0)
+            g = random.uniform(0.0, 1.0)
+            b = random.uniform(0.0, 1.0)
+            model.set_color([r, g, b, 1.0])
+```
+
+---
+
+## 7.3 Contact Dynamics Tuning
+
+### Material Properties
+
+Different materials have different contact behaviors:
+
+```xml
+<!-- Rubber foot (high friction, compliant) -->
+<gazebo reference="left_foot">
+  <mu1>1.5</mu1>
+  <mu2>1.5</mu2>
+  <kp>1000000.0</kp>
+  <kd>100.0</kd>
+  <material>Gazebo/Grey</material>
+</gazebo>
+
+<!-- Metal hand (low friction, stiff) -->
+<gazebo reference="left_hand">
+  <mu1>0.3</mu1>
+  <mu2>0.3</mu2>
+  <kp>10000000.0</kp>
+  <kd>1.0</kd>
+  <material>Gazebo/Metal</material>
+</gazebo>
+
+<!-- Soft gripper pads (high friction, very compliant) -->
+<gazebo reference="gripper_pad">
+  <mu1>2.0</mu1>
+  <mu2>2.0</mu2>
+  <kp>50000.0</kp>
+  <kd>500.0</kd>
+  <material>Gazebo/Black</material>
+</gazebo>
+```
+
+**Parameters**:
+- **mu1/mu2**: Friction coefficients (higher = more grip)
+- **kp**: Contact stiffness (higher = harder material)
+- **kd**: Contact damping (higher = dissipates energy faster)
+
+### Testing Contact Dynamics
+
+```python
+#!/usr/bin/env python3
+"""
+Test contact dynamics by dropping objects.
+Measure bounce height vs. contact stiffness.
+"""
+
+import rclpy
+from rclpy.node import Node
+from gazebo_msgs.srv import SpawnEntity, DeleteEntity, SetEntityState
+from gazebo_msgs.msg import ModelStates
+from geometry_msgs.msg import Pose
+import time
+
+
+class ContactDynamicsTester(Node):
+    """Test contact parameters by dropping objects."""
+
+    def __init__(self):
+        super().__init__('contact_tester')
+
+        # Service clients
+        self.spawn_client = self.create_client(SpawnEntity, '/spawn_entity')
+        self.delete_client = self.create_client(DeleteEntity, '/delete_entity')
+
+        # Subscribe to model states
+        self.states_sub = self.create_subscription(
+            ModelStates,
+            '/gazebo/model_states',
+            self.states_callback,
+            10
+        )
+
+        self.model_states = {}
+
+    def states_callback(self, msg):
+        """Track model positions."""
+        for i, name in enumerate(msg.name):
+            self.model_states[name] = msg.pose[i].position.z
+
+    def drop_test(self, kp_value, kd_value):
+        """Drop a sphere and measure bounce height."""
+
+        # Sphere SDF with contact parameters
+        sphere_sdf = f"""
+        <sdf version='1.6'>
+          <model name='test_sphere'>
+            <link name='link'>
+              <pose>0 0 2.0 0 0 0</pose>
+              <collision name='collision'>
+                <geometry>
+                  <sphere><radius>0.1</radius></sphere>
+                </geometry>
+                <surface>
+                  <contact>
+                    <ode>
+                      <kp>{kp_value}</kp>
+                      <kd>{kd_value}</kd>
+                    </ode>
+                  </contact>
+                </surface>
+              </collision>
+              <visual name='visual'>
+                <geometry>
+                  <sphere><radius>0.1</radius></sphere>
+                </geometry>
+              </visual>
+              <inertial>
+                <mass>0.5</mass>
+                <inertia>
+                  <ixx>0.001</ixx><iyy>0.001</iyy><izz>0.001</izz>
+                </inertia>
+              </inertial>
+            </link>
+          </model>
+        </sdf>
+        """
+
+        # Spawn sphere
+        spawn_request = SpawnEntity.Request()
+        spawn_request.name = 'test_sphere'
+        spawn_request.xml = sphere_sdf
+        self.spawn_client.call(spawn_request)
+
+        # Wait for drop and bounce
+        time.sleep(3.0)
+
+        # Measure max bounce height
+        max_height = 0.0
+        for _ in range(20):
+            if 'test_sphere' in self.model_states:
+                height = self.model_states['test_sphere']
+                if height > max_height and height < 1.9:  # Ignore initial drop
+                    max_height = height
+            time.sleep(0.1)
+
+        # Delete sphere
+        delete_request = DeleteEntity.Request()
+        delete_request.name = 'test_sphere'
+        self.delete_client.call(delete_request)
+
+        return max_height
+
+
+def main():
+    rclpy.init()
+    node = ContactDynamicsTester()
+
+    # Test different stiffness values
+    kp_values = [100000, 1000000, 10000000]
+
+    print("kp\t\tBounce Height (m)")
+    print("=" * 40)
+
+    for kp in kp_values:
+        bounce = node.drop_test(kp, 1.0)
+        print(f"{kp}\t\t{bounce:.3f}")
+
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+---
+
+## 7.4 Automated Domain Randomization
+
+### Environment Randomization Script
+
+```python
+#!/usr/bin/env python3
+"""
+Automated domain randomization for RL training.
+Resets environment with randomized parameters every episode.
+"""
+
+import rclpy
+from rclpy.node import Node
+from gazebo_msgs.srv import SetPhysicsProperties, SetModelState
+from gazebo_msgs.msg import ODEPhysics, ModelState
+from geometry_msgs.msg import Pose, Twist
+from std_srvs.srv import Empty
+import random
+import numpy as np
+
+
+class DomainRandomizationNode(Node):
+    """Manage domain randomization for training."""
+
+    def __init__(self):
+        super().__init__('domain_randomization')
+
+        # Clients
+        self.pause_client = self.create_client(Empty, '/pause_physics')
+        self.unpause_client = self.create_client(Empty, '/unpause_physics')
+        self.reset_client = self.create_client(Empty, '/reset_simulation')
+        self.physics_client = self.create_client(
+            SetPhysicsProperties,
+            '/set_physics_properties'
+        )
+        self.set_model_state_client = self.create_client(
+            SetModelState,
+            '/set_model_state'
+        )
+
+        self.get_logger().info('Domain randomization node ready')
+
+    def reset_environment(self):
+        """Reset simulation with randomized parameters."""
+
+        # Pause physics
+        self.pause_client.call_async(Empty.Request())
+
+        # Reset world
+        self.reset_client.call_async(Empty.Request())
+
+        # Randomize physics
+        self.randomize_physics()
+
+        # Randomize object poses
+        self.randomize_objects()
+
+        # Randomize robot initial state
+        self.randomize_robot()
+
+        # Unpause
+        self.unpause_client.call_async(Empty.Request())
+
+        self.get_logger().info('Environment randomized and reset')
+
+    def randomize_physics(self):
+        """Randomize global physics properties."""
+        request = SetPhysicsProperties.Request()
+
+        # Gravity randomization
+        request.gravity.x = 0.0
+        request.gravity.y = 0.0
+        request.gravity.z = random.uniform(-10.0, -9.5)
+
+        # ODE physics parameters
+        request.ode_config = ODEPhysics()
+        request.ode_config.max_step_size = 0.001
+        request.ode_config.real_time_factor = 1.0
+        request.ode_config.real_time_update_rate = 1000.0
+
+        # Solver iterations (affects accuracy/speed trade-off)
+        request.ode_config.sor_pgs_iters = random.choice([50, 100, 150])
+
+        self.physics_client.call_async(request)
+
+    def randomize_objects(self):
+        """Randomize object positions and orientations."""
+        objects = ['red_mug', 'table', 'chair']
+
+        for obj_name in objects:
+            request = SetModelState.Request()
+            request.model_state = ModelState()
+            request.model_state.model_name = obj_name
+
+            # Random position (within bounds)
+            pose = Pose()
+            if obj_name == 'red_mug':
+                pose.position.x = 2.0 + random.uniform(-0.3, 0.3)
+                pose.position.y = random.uniform(-0.3, 0.3)
+                pose.position.z = 0.85
+            elif obj_name == 'table':
+                pose.position.x = 2.0
+                pose.position.y = random.uniform(-0.5, 0.5)
+                pose.position.z = 0.0
+
+            # Random orientation (yaw only)
+            yaw = random.uniform(-np.pi, np.pi)
+            pose.orientation.z = np.sin(yaw / 2)
+            pose.orientation.w = np.cos(yaw / 2)
+
+            request.model_state.pose = pose
+
+            # Zero velocity
+            request.model_state.twist = Twist()
+
+            self.set_model_state_client.call_async(request)
+
+    def randomize_robot(self):
+        """Randomize robot initial state."""
+        request = SetModelState.Request()
+        request.model_state = ModelState()
+        request.model_state.model_name = 'humanoid'
+
+        # Random start position (small area)
+        pose = Pose()
+        pose.position.x = random.uniform(-0.5, 0.5)
+        pose.position.y = random.uniform(-0.5, 0.5)
+        pose.position.z = 1.0  # Standing height
+
+        # Random orientation
+        yaw = random.uniform(-np.pi / 4, np.pi / 4)  # ±45 degrees
+        pose.orientation.z = np.sin(yaw / 2)
+        pose.orientation.w = np.cos(yaw / 2)
+
+        request.model_state.pose = pose
+        request.model_state.twist = Twist()  # Zero velocity
+
+        self.set_model_state_client.call_async(request)
+
+
+def main():
+    rclpy.init()
+    node = DomainRandomizationNode()
+
+    # Randomize 10 times
+    for i in range(10):
+        print(f"\n=== Randomization {i+1} ===")
+        node.reset_environment()
+        time.sleep(2.0)  # Observe randomized environment
+
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+---
+
+## 7.5 Performance Optimization
+
+### Simulation Speed
+
+**Real-time factor (RTF)**: Ratio of simulation time to wall-clock time.
+- **RTF = 1.0**: Real-time (1 sec sim = 1 sec real)
+- **RTF = 10.0**: 10x faster (1 sec sim = 0.1 sec real)
+- **RTF = 0.5**: 2x slower (1 sec sim = 2 sec real)
+
+**Factors Affecting Speed**:
+1. Physics solver iterations
+2. Contact complexity
+3. Sensor update rates
+4. Rendering (GUI)
+5. Model mesh complexity
+
+### Optimization Techniques
+
+```xml
+<!-- Fast physics (lower accuracy) -->
+<physics type="ode">
+  <max_step_size>0.005</max_step_size>  <!-- 5ms vs. 1ms -->
+  <real_time_factor>1.0</real_time_factor>
+  <real_time_update_rate>200</real_time_update_rate>  <!-- 200 Hz vs. 1000 Hz -->
+
+  <ode>
+    <solver>
+      <type>quick</type>  <!-- Quick solver (fastest) -->
+      <iters>20</iters>   <!-- Fewer iterations -->
+    </solver>
+  </ode>
+</physics>
+
+<!-- Disable GUI for headless training -->
+<!-- Run: gzserver world.sdf (no gzclient) -->
+
+<!-- Reduce sensor rates -->
+<sensor name="camera" type="camera">
+  <update_rate>10</update_rate>  <!-- 10 Hz vs. 30 Hz -->
+</sensor>
+
+<!-- Use simplified collision meshes -->
+<collision name="collision">
+  <geometry>
+    <box size="0.5 0.5 1.0"/>  <!-- Box instead of complex mesh -->
+  </geometry>
+</collision>
+```
+
+**Benchmark**:
+```bash
+# Check RTF
+gazebo kitchen_world.sdf --verbose
+
+# Monitor: "Real time factor: X.XX" in console
+# Target: RTF > 1.0 for efficient RL training
+```
+
+---
+
+## 7.6 Recording & Replay
+
+### rosbag2: Data Logging
+
+```bash
+# Record all topics
+ros2 bag record -a
+
+# Record specific topics
+ros2 bag record /joint_states /camera/image_raw /scan
+
+# Record for duration
+ros2 bag record -a --duration 60  # 60 seconds
+
+# Get bag info
+ros2 bag info my_bag.db3
+
+# Play bag
+ros2 bag play my_bag.db3
+
+# Play at different speeds
+ros2 bag play my_bag.db3 --rate 2.0  # 2x speed
+ros2 bag play my_bag.db3 --rate 0.5  # Half speed (slow motion)
+```
+
+### Programmatic Bag Reading
+
+```python
+#!/usr/bin/env python3
+"""
+Read rosbag2 files and analyze data.
+"""
+
+from rosbag2_py import SequentialReader, StorageOptions, ConverterOptions
+from rclpy.serialization import deserialize_message
+from sensor_msgs.msg import JointState
+import numpy as np
+
+
+def analyze_joint_data(bag_path):
+    """Analyze joint positions from bag file."""
+
+    # Setup reader
+    storage_options = StorageOptions(uri=bag_path, storage_id='sqlite3')
+    converter_options = ConverterOptions('', '')
+
+    reader = SequentialReader()
+    reader.open(storage_options, converter_options)
+
+    # Collect joint data
+    joint_positions = []
+
+    while reader.has_next():
+        topic, data, timestamp = reader.read_next()
+
+        if topic == '/joint_states':
+            msg = deserialize_message(data, JointState)
+            joint_positions.append(msg.position)
+
+    # Convert to numpy array
+    positions = np.array(joint_positions)
+
+    print(f"Recorded {len(joint_positions)} joint state messages")
+    print(f"Joint position ranges:")
+    for i in range(positions.shape[1]):
+        print(f"  Joint {i}: [{positions[:, i].min():.3f}, {positions[:, i].max():.3f}]")
+
+    # Compute statistics
+    print(f"\nMean positions: {positions.mean(axis=0)}")
+    print(f"Std dev: {positions.std(axis=0)}")
+
+
+if __name__ == '__main__':
+    analyze_joint_data('my_bag.db3')
+```
+
+---
+
+## 7.7 Lab: RL-Ready Simulation Environment
+
+### Objective
+Create a domain-randomized simulation environment for training a humanoid to pick up objects:
+
+1. Gazebo world with table and objects
+2. Domain randomization plugin
+3. Reset service
+4. Observation/action ROS 2 interface
+5. Reward computation node
+
+### Gym-like Environment Wrapper
+
+```python
+#!/usr/bin/env python3
+"""
+OpenAI Gym interface for Gazebo simulation.
+Enables standard RL training libraries (Stable-Baselines3, RLlib).
+"""
+
+import gymnasium as gym
+from gymnasium import spaces
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import JointState
+from geometry_msgs.msg import Pose
+from std_srvs.srv import Empty
+import numpy as np
+
+
+class GazeboHumanoidEnv(gym.Env):
+    """Gym environment for humanoid in Gazebo."""
+
+    def __init__(self):
+        super().__init__()
+
+        # Initialize ROS 2
+        rclpy.init()
+        self.node = rclpy.create_node('gazebo_env')
+
+        # Action space: joint position commands (30 DOF)
+        self.action_space = spaces.Box(
+            low=-1.0,
+            high=1.0,
+            shape=(30,),
+            dtype=np.float32
+        )
+
+        # Observation space: joint pos (30) + vel (30) + IMU (6) = 66
+        self.observation_space = spaces.Box(
+            low=-np.inf,
+            high=np.inf,
+            shape=(66,),
+            dtype=np.float32
+        )
+
+        # ROS 2 setup
+        self.joint_state_sub = self.node.create_subscription(
+            JointState,
+            '/joint_states',
+            self.joint_state_callback,
+            10
+        )
+
+        self.reset_client = self.node.create_client(Empty, '/reset_simulation')
+
+        # State tracking
+        self.joint_positions = np.zeros(30)
+        self.joint_velocities = np.zeros(30)
+
+        self.node.get_logger().info('Gazebo Gym environment initialized')
+
+    def joint_state_callback(self, msg):
+        """Update joint states."""
+        self.joint_positions = np.array(msg.position[:30])
+        self.joint_velocities = np.array(msg.velocity[:30])
+
+    def reset(self, seed=None, options=None):
+        """Reset environment."""
+        super().reset(seed=seed)
+
+        # Call Gazebo reset service
+        self.reset_client.call_async(Empty.Request())
+
+        # Spin once to get updated state
+        rclpy.spin_once(self.node, timeout_sec=0.1)
+
+        obs = self._get_observation()
+        info = {}
+
+        return obs, info
+
+    def step(self, action):
+        """Execute action and return next observation."""
+
+        # Send action (publish to /joint_commands)
+        # ... implementation ...
+
+        # Step simulation (spin once)
+        rclpy.spin_once(self.node, timeout_sec=0.02)  # 50 Hz
+
+        # Get observation
+        obs = self._get_observation()
+
+        # Compute reward
+        reward = self._compute_reward()
+
+        # Check termination
+        terminated = self._check_termination()
+        truncated = False
+
+        info = {}
+
+        return obs, reward, terminated, truncated, info
+
+    def _get_observation(self):
+        """Get current observation."""
+        imu_data = np.zeros(6)  # Placeholder
+
+        obs = np.concatenate([
+            self.joint_positions,
+            self.joint_velocities,
+            imu_data
+        ])
+
+        return obs.astype(np.float32)
+
+    def _compute_reward(self):
+        """Compute reward (task-specific)."""
+        # Example: Reward forward velocity
+        forward_vel = self.joint_velocities[0]  # Simplified
+        reward = forward_vel
+
+        # Penalty for falling
+        height = 1.0  # Would get from model state
+        if height < 0.5:
+            reward -= 10.0
+
+        return reward
+
+    def _check_termination(self):
+        """Check if episode should end."""
+        height = 1.0  # Placeholder
+        return height < 0.5  # Terminate if fallen
+
+    def close(self):
+        """Cleanup."""
+        self.node.destroy_node()
+        rclpy.shutdown()
+
+
+# Usage with Stable-Baselines3
+if __name__ == '__main__':
+    from stable_baselines3 import PPO
+
+    env = GazeboHumanoidEnv()
+
+    # Train PPO policy
+    model = PPO("MlpPolicy", env, verbose=1)
+    model.learn(total_timesteps=100000)
+
+    # Save policy
+    model.save("humanoid_walk_policy")
+
+    env.close()
+```
+
+---
+
+## Exercises
+
+### Basic (40%)
+1. **Create** a domain randomization plugin that randomizes object colors every 5 seconds. Spawn 5 colored boxes and observe color changes.
+
+2. **Record** a rosbag of a humanoid walking for 30 seconds. Include: /joint_states, /camera/image_raw, /scan. Report bag size.
+
+3. **Tune** contact parameters for a robot foot. Test kp values: 1e5, 1e6, 1e7. Measure slip distance when applying lateral force.
+
+### Intermediate (40%)
+4. **Implement** visual randomization:
+   - Randomize lighting intensity (0.5-1.5x nominal)
+   - Randomize object textures (swap between 5 texture files)
+   - Test object detection robustness
+
+5. **Create** an automated testing pipeline:
+   - Launch Gazebo headless
+   - Run 50 episodes with domain randomization
+   - Log success rate, episode length
+   - Plot learning curve
+
+6. **Build** the Gym environment wrapper from section 7.7. Integrate with Stable-Baselines3 PPO. Train for 10k steps and visualize the policy.
+
+### Advanced (20%)
+7. **Benchmark** physics engines:
+   - ODE vs. Bullet vs. Simbody
+   - Metrics: Simulation speed (RTF), contact accuracy (penetration depth), stability (energy conservation)
+   - Report findings in a table
+
+8. **Implement** progressive domain randomization [4]:
+   - Start with narrow randomization ranges
+   - Gradually increase as policy improves
+   - Track success rate vs. randomization strength
+
+9. **Capstone Prep**: Prepare your Week 13 simulation environment:
+   - Create kitchen world with domain randomization
+   - Implement Gym wrapper
+   - Test with 100 random resets
+   - Measure average reset time (&lt;1 second target)
+
+---
+
+## Further Reading
+
+- **Domain Randomization**: Peng et al., "Sim-to-Real Transfer of Robotic Control," ICRA 2018
+- **Gazebo Plugins**: http://classic.gazebosim.org/tutorials?tut=plugins_hello_world
+- **rosbag2**: https://docs.ros.org/en/humble/Tutorials/Beginner-CLI-Tools/Recording-And-Playing-Back-Data.html
+
+---
+
+## Summary
+
+- **Custom Gazebo plugins** extend simulation capabilities (physics, sensors, world)
+- **Domain randomization** bridges sim-to-real gap by training on distributions
+- **Randomization targets**: Physics (gravity, friction), robot (mass, damping), sensors (noise), visuals (lighting, colors)
+- **Contact dynamics** tuning ensures realistic object interaction
+- **rosbag2** enables data recording and replay for analysis
+- **Gym wrappers** integrate Gazebo with standard RL libraries
+- **Headless simulation** (no GUI) achieves higher RTF for efficient training
+
+**Next**: [Week 8-10: NVIDIA Isaac Platform](./week-08)
+
+---
+
+## References
+
+[1] N. Koenig and A. Howard, "Design and Use Paradigms for Gazebo," *IROS*, 2004.
+
+[2] X. B. Peng et al., "Sim-to-Real Transfer of Robotic Control with Dynamics Randomization," *ICRA*, 2018.
+
+[3] Arthur D. Little, "BLUE SHIFT Physical AI," 2025, p. 15.
+
+[4] OpenAI et al., "Learning Dexterous In-Hand Manipulation," *IJRR*, 2020.
+
+---
+
+

@@ -1,0 +1,945 @@
+---
+id: week-02
+title: Realistic Interaction & Emotional AI
+sidebar_label: Realistic Interaction & Emotional AI
+sidebar_position: 2
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Week 2: Realistic Interaction & Emotional AI
+
+## Learning Outcomes
+
+By the end of this module, you will be able to:
+
+1. **Design** natural human-robot interaction (HRI) systems with speech, gestures, and facial expressions
+2. **Implement** emotion recognition using computer vision and voice analysis
+3. **Integrate** conversational AI with robotic systems
+4. **Apply** social robotics principles for healthcare and service domains
+5. **Evaluate** user acceptance factors in humanoid robot deployment
+
+---
+
+## 2.1 Why Realistic Interaction Matters
+
+### The Uncanny Valley
+
+**Uncanny Valley** [1]: Humanoid robots that appear *almost* human but not quite trigger discomfort and rejection.
+
+```
+Affinity
+  ^
+  |     /\
+  |    /  \___      (Human)
+  |   /      /|
+  |  /      / |
+  | /      /  |  <-- Uncanny Valley (creepy zone)
+  |/______/   |
+  |-----------|----------->
+    Toy   Humanoid  Realistic
+         Robot      Human
+```
+
+**Figure 2.1**: Mori's Uncanny Valley hypothesis. As robots become more human-like, affinity increases until a point where imperfections trigger revulsion [1].
+
+**Design Strategies**:
+1. **Clearly robotic** (e.g., Atlas, industrial arms) - No expectation of human behavior
+2. **Stylized human** (e.g., Pepper, toy-like) - Cute, non-threatening
+3. **Hyperrealistic** (e.g., Sophia) - Cross the valley completely
+
+> **Jim Rauf (OLLI 2025)**: "Successful service robots prioritize functional realism over visual realism—fluid motion, appropriate responses, and reliable task execution build trust more than hyper-realistic faces." [2, Slide 28]
+
+---
+
+## 2.2 Multimodal Interaction
+
+### Modalities for HRI
+
+Humans communicate through multiple channels simultaneously:
+
+| Modality | Input (Human → Robot) | Output (Robot → Human) |
+|----------|----------------------|----------------------|
+| **Speech** | Voice commands, intent | Spoken responses, alerts |
+| **Vision** | Gestures, facial expressions | LED eyes, screen displays |
+| **Touch** | Buttons, handshakes | Haptic feedback, temperature |
+| **Proximity** | Personal space | Approach/retreat behaviors |
+
+**China Unicom Insight**: "Multimodal fusion reduces error rates by 30-50% compared to single-modality systems, critical for safety-critical applications." [3, p. 58]
+
+### Speech Recognition & Synthesis
+
+#### OpenAI Whisper Integration
+
+```python
+#!/usr/bin/env python3
+"""
+Real-time speech recognition using OpenAI Whisper.
+Converts voice commands to text for robot task execution.
+
+Reference: Radford et al., "Robust Speech Recognition via Large-Scale
+           Weak Supervision," OpenAI, 2022
+"""
+
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import String
+import whisper
+import pyaudio
+import numpy as np
+import wave
+
+
+class SpeechRecognitionNode(Node):
+    """Continuous speech recognition with Whisper."""
+
+    def __init__(self):
+        super().__init__('speech_recognition')
+
+        # Publisher for recognized text
+        self.text_publisher = self.create_publisher(
+            String,
+            '/voice_command',
+            10
+        )
+
+        # Load Whisper model
+        self.model = whisper.load_model("base")  # Options: tiny, base, small, medium, large
+        self.get_logger().info('Whisper model loaded')
+
+        # Audio configuration
+        self.CHUNK = 16000  # 1 second at 16kHz
+        self.FORMAT = pyaudio.paFloat32
+        self.CHANNELS = 1
+        self.RATE = 16000
+
+        # Initialize PyAudio
+        self.audio = pyaudio.PyAudio()
+        self.stream = self.audio.open(
+            format=self.FORMAT,
+            channels=self.CHANNELS,
+            rate=self.RATE,
+            input=True,
+            frames_per_buffer=self.CHUNK,
+            stream_callback=self.audio_callback
+        )
+
+        self.get_logger().info('Speech recognition active. Speak now!')
+
+    def audio_callback(self, in_data, frame_count, time_info, status):
+        """Process audio chunks in real-time."""
+        # Convert bytes to numpy array
+        audio_data = np.frombuffer(in_data, dtype=np.float32)
+
+        # Check if speech is present (simple energy threshold)
+        energy = np.sqrt(np.mean(audio_data ** 2))
+
+        if energy > 0.02:  # Speech detected
+            # Transcribe with Whisper
+            result = self.model.transcribe(
+                audio_data,
+                language='en',
+                task='transcribe'
+            )
+
+            text = result['text'].strip()
+
+            if text:
+                self.get_logger().info(f'Recognized: "{text}"')
+
+                # Publish to ROS 2
+                msg = String()
+                msg.data = text
+                self.text_publisher.publish(msg)
+
+        return (in_data, pyaudio.paContinue)
+
+    def __del__(self):
+        """Cleanup audio resources."""
+        if hasattr(self, 'stream'):
+            self.stream.stop_stream()
+            self.stream.close()
+        if hasattr(self, 'audio'):
+            self.audio.terminate()
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = SpeechRecognitionNode()
+
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+#### Text-to-Speech (TTS)
+
+```python
+#!/usr/bin/env python3
+"""
+Text-to-speech using gTTS (Google Text-to-Speech).
+Robot speaks responses to user queries.
+"""
+
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import String
+from gtts import gTTS
+import os
+import pygame
+
+
+class TextToSpeechNode(Node):
+    """Convert text to speech and play audio."""
+
+    def __init__(self):
+        super().__init__('text_to_speech')
+
+        # Subscribe to text responses
+        self.subscription = self.create_subscription(
+            String,
+            '/robot_response',
+            self.text_callback,
+            10
+        )
+
+        # Initialize pygame mixer for audio playback
+        pygame.mixer.init()
+
+        self.get_logger().info('TTS node ready')
+
+    def text_callback(self, msg):
+        """Convert text to speech and play."""
+        text = msg.data
+        self.get_logger().info(f'Speaking: "{text}"')
+
+        try:
+            # Generate speech
+            tts = gTTS(text=text, lang='en', slow=False)
+
+            # Save to temporary file
+            filename = '/tmp/robot_speech.mp3'
+            tts.save(filename)
+
+            # Play audio
+            pygame.mixer.music.load(filename)
+            pygame.mixer.music.play()
+
+            # Wait until playback finishes
+            while pygame.mixer.music.get_busy():
+                pygame.time.Clock().tick(10)
+
+            # Cleanup
+            os.remove(filename)
+
+        except Exception as e:
+            self.get_logger().error(f'TTS failed: {e}')
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = TextToSpeechNode()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+**Dependencies**:
+```bash
+pip install openai-whisper pyaudio gTTS pygame
+```
+
+---
+
+## 2.3 Gesture Recognition
+
+### Hand Gesture Detection with MediaPipe
+
+```python
+#!/usr/bin/env python3
+"""
+Hand gesture recognition using MediaPipe.
+Detects gestures: wave, point, thumbs up, stop.
+
+Reference: Google MediaPipe Hands
+https://google.github.io/mediapipe/solutions/hands
+"""
+
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import Image
+from std_msgs.msg import String
+from cv_bridge import CvBridge
+import cv2
+import mediapipe as mp
+import numpy as np
+
+
+class GestureRecognitionNode(Node):
+    """Recognize hand gestures from camera feed."""
+
+    def __init__(self):
+        super().__init__('gesture_recognition')
+
+        # Subscribe to camera
+        self.image_sub = self.create_subscription(
+            Image,
+            '/camera/image_raw',
+            self.image_callback,
+            10
+        )
+
+        # Publish recognized gestures
+        self.gesture_pub = self.create_publisher(
+            String,
+            '/gesture_command',
+            10
+        )
+
+        # CV Bridge
+        self.bridge = CvBridge()
+
+        # MediaPipe Hands
+        self.mp_hands = mp.solutions.hands
+        self.hands = self.mp_hands.Hands(
+            static_image_mode=False,
+            max_num_hands=2,
+            min_detection_confidence=0.7,
+            min_tracking_confidence=0.7
+        )
+        self.mp_draw = mp.solutions.drawing_utils
+
+        self.get_logger().info('Gesture recognition ready')
+
+    def image_callback(self, msg):
+        """Process camera image and detect gestures."""
+        # Convert ROS Image to OpenCV
+        frame = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
+
+        # Convert to RGB for MediaPipe
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+        # Detect hands
+        results = self.hands.process(rgb_frame)
+
+        if results.multi_hand_landmarks:
+            for hand_landmarks in results.multi_hand_landmarks:
+                # Draw landmarks
+                self.mp_draw.draw_landmarks(
+                    frame,
+                    hand_landmarks,
+                    self.mp_hands.HAND_CONNECTIONS
+                )
+
+                # Classify gesture
+                gesture = self.classify_gesture(hand_landmarks)
+
+                if gesture:
+                    self.get_logger().info(f'Detected gesture: {gesture}')
+
+                    # Publish gesture
+                    msg = String()
+                    msg.data = gesture
+                    self.gesture_pub.publish(msg)
+
+                    # Display on frame
+                    cv2.putText(
+                        frame,
+                        gesture,
+                        (10, 50),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        1,
+                        (0, 255, 0),
+                        2
+                    )
+
+        # Display (optional)
+        cv2.imshow('Gesture Recognition', frame)
+        cv2.waitKey(1)
+
+    def classify_gesture(self, landmarks):
+        """
+        Classify hand gesture based on landmark positions.
+
+        Landmarks: 21 points (0=wrist, 4=thumb tip, 8=index tip, etc.)
+        """
+        # Extract landmark coordinates
+        points = []
+        for lm in landmarks.landmark:
+            points.append([lm.x, lm.y, lm.z])
+        points = np.array(points)
+
+        # Finger tips: thumb(4), index(8), middle(12), ring(16), pinky(20)
+        # Finger bases: thumb(2), index(5), middle(9), ring(13), pinky(17)
+
+        # Check which fingers are extended
+        fingers_up = []
+
+        # Thumb (check if tip is to the right of base)
+        if points[4][0] > points[2][0]:  # Right hand
+            fingers_up.append(True)
+        else:
+            fingers_up.append(False)
+
+        # Other fingers (check if tip is above base)
+        for tip, base in [(8, 6), (12, 10), (16, 14), (20, 18)]:
+            if points[tip][1] < points[base][1]:
+                fingers_up.append(True)
+            else:
+                fingers_up.append(False)
+
+        # Classify gestures
+        num_fingers = sum(fingers_up)
+
+        if num_fingers == 5:
+            return "wave"  # All fingers extended
+        elif num_fingers == 1 and fingers_up[1]:  # Only index finger
+            return "point"
+        elif num_fingers == 1 and fingers_up[0]:  # Only thumb
+            return "thumbs_up"
+        elif num_fingers == 0:
+            return "fist"
+        elif fingers_up == [False, True, True, True, True]:  # All except thumb
+            return "stop"
+
+        return None
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = GestureRecognitionNode()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+**Supported Gestures**:
+- **Wave**: All fingers extended → Greeting
+- **Point**: Index finger only → Direction indication
+- **Thumbs Up**: Thumb only → Approval/confirmation
+- **Stop**: Palm facing forward → Halt command
+- **Fist**: No fingers extended → Power grasp
+
+---
+
+## 2.4 Emotion Recognition
+
+### Facial Expression Analysis
+
+```python
+#!/usr/bin/env python3
+"""
+Emotion recognition from facial expressions.
+Uses DeepFace library for emotion classification.
+
+Reference: Serengil & Ozpinar, "LightFace: A Hybrid Deep Face
+           Recognition Framework," IEEE, 2020
+"""
+
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import Image
+from std_msgs.msg import String
+from cv_bridge import CvBridge
+import cv2
+from deepface import DeepFace
+
+
+class EmotionRecognitionNode(Node):
+    """Detect emotions from human faces."""
+
+    def __init__(self):
+        super().__init__('emotion_recognition')
+
+        # Subscribe to camera
+        self.image_sub = self.create_subscription(
+            Image,
+            '/camera/image_raw',
+            self.image_callback,
+            10
+        )
+
+        # Publish detected emotions
+        self.emotion_pub = self.create_publisher(
+            String,
+            '/human_emotion',
+            10
+        )
+
+        self.bridge = CvBridge()
+        self.frame_count = 0
+
+        self.get_logger().info('Emotion recognition ready')
+
+    def image_callback(self, msg):
+        """Analyze emotions from camera feed."""
+        self.frame_count += 1
+
+        # Process every 10th frame (reduce compute)
+        if self.frame_count % 10 != 0:
+            return
+
+        # Convert ROS Image to OpenCV
+        frame = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
+
+        try:
+            # Analyze emotions
+            result = DeepFace.analyze(
+                frame,
+                actions=['emotion'],
+                enforce_detection=False
+            )
+
+            if isinstance(result, list):
+                result = result[0]
+
+            # Get dominant emotion
+            emotion = result['dominant_emotion']
+            confidence = result['emotion'][emotion]
+
+            self.get_logger().info(
+                f'Detected emotion: {emotion} ({confidence:.2f}%)'
+            )
+
+            # Publish emotion
+            msg = String()
+            msg.data = f"{emotion}:{confidence:.2f}"
+            self.emotion_pub.publish(msg)
+
+            # Display on frame
+            cv2.putText(
+                frame,
+                f"{emotion} ({confidence:.1f}%)",
+                (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (0, 255, 0),
+                2
+            )
+
+        except Exception as e:
+            self.get_logger().warn(f'No face detected: {e}')
+
+        # Display
+        cv2.imshow('Emotion Recognition', frame)
+        cv2.waitKey(1)
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = EmotionRecognitionNode()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+**Detected Emotions**:
+- Happy, Sad, Angry, Surprised, Fear, Disgust, Neutral
+
+**Applications**:
+- **Elder Care**: Detect distress, loneliness → alert caregivers
+- **Therapy**: Monitor patient mood during sessions
+- **Customer Service**: Adapt responses based on user emotion
+
+---
+
+## 2.5 Conversational AI Integration
+
+### LLM-Powered Dialogue System
+
+```python
+#!/usr/bin/env python3
+"""
+Conversational AI for humanoid robots.
+Uses OpenAI GPT-4 for natural dialogue with context awareness.
+"""
+
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import String
+import openai
+import os
+
+
+class ConversationalAINode(Node):
+    """Natural language dialogue system."""
+
+    def __init__(self):
+        super().__init__('conversational_ai')
+
+        # OpenAI API key
+        openai.api_key = os.getenv('OPENAI_API_KEY')
+
+        # Subscribe to voice commands
+        self.command_sub = self.create_subscription(
+            String,
+            '/voice_command',
+            self.command_callback,
+            10
+        )
+
+        # Subscribe to detected emotions
+        self.emotion_sub = self.create_subscription(
+            String,
+            '/human_emotion',
+            self.emotion_callback,
+            10
+        )
+
+        # Publish robot responses
+        self.response_pub = self.create_publisher(
+            String,
+            '/robot_response',
+            10
+        )
+
+        # Conversation history
+        self.conversation_history = [
+            {
+                "role": "system",
+                "content": """You are a helpful humanoid robot assistant.
+You are empathetic, friendly, and concise. You can:
+- Answer questions about daily tasks
+- Provide companionship
+- Perform household tasks when asked
+- Respond appropriately to user emotions
+
+Keep responses under 50 words for natural speech synthesis."""
+            }
+        ]
+
+        # Current user emotion
+        self.user_emotion = "neutral"
+
+        self.get_logger().info('Conversational AI ready')
+
+    def emotion_callback(self, msg):
+        """Update user emotion context."""
+        emotion_data = msg.data.split(':')
+        self.user_emotion = emotion_data[0]
+
+    def command_callback(self, msg):
+        """Process user voice command and generate response."""
+        user_input = msg.data
+        self.get_logger().info(f'User: "{user_input}"')
+
+        # Add emotion context
+        context_input = f"[User emotion: {self.user_emotion}] {user_input}"
+
+        # Add to conversation history
+        self.conversation_history.append({
+            "role": "user",
+            "content": context_input
+        })
+
+        # Generate response with GPT-4
+        try:
+            response = openai.ChatCompletion.create(
+                model="gpt-4",
+                messages=self.conversation_history[-10:],  # Last 10 messages
+                max_tokens=100,
+                temperature=0.7
+            )
+
+            robot_response = response.choices[0].message.content
+
+            # Add to history
+            self.conversation_history.append({
+                "role": "assistant",
+                "content": robot_response
+            })
+
+            self.get_logger().info(f'Robot: "{robot_response}"')
+
+            # Publish response (will be spoken by TTS)
+            msg = String()
+            msg.data = robot_response
+            self.response_pub.publish(msg)
+
+        except Exception as e:
+            self.get_logger().error(f'OpenAI API error: {e}')
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = ConversationalAINode()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+---
+
+## 2.6 Social Robotics Applications
+
+### Elder Care Scenario
+
+**Use Case**: Companion robot for isolated seniors [3, pp. 96-100]
+
+**Capabilities**:
+1. **Medication Reminders**: Voice alerts at scheduled times
+2. **Fall Detection**: Monitor human posture, alert if fallen
+3. **Emotional Support**: Detect sadness/loneliness, engage in conversation
+4. **Cognitive Exercises**: Memory games, storytelling
+5. **Telehealth**: Video calls with family, doctors
+
+```python
+#!/usr/bin/env python3
+"""
+Elder care robot: Medication reminder system.
+"""
+
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import String
+from datetime import datetime
+
+
+class MedicationReminderNode(Node):
+    """Remind elderly users to take medication."""
+
+    def __init__(self):
+        super().__init__('medication_reminder')
+
+        # Medication schedule
+        self.schedule = {
+            "08:00": "Morning medication: Blood pressure pill",
+            "12:00": "Afternoon medication: Vitamin D",
+            "20:00": "Evening medication: Sleep aid"
+        }
+
+        # Publisher for speech output
+        self.speech_pub = self.create_publisher(
+            String,
+            '/robot_response',
+            10
+        )
+
+        # Timer: Check every minute
+        self.timer = self.create_timer(60.0, self.check_schedule)
+
+        self.get_logger().info('Medication reminder active')
+
+    def check_schedule(self):
+        """Check if it's time for medication."""
+        current_time = datetime.now().strftime("%H:%M")
+
+        if current_time in self.schedule:
+            reminder = self.schedule[current_time]
+            self.get_logger().info(f'Reminder: {reminder}')
+
+            # Speak reminder
+            msg = String()
+            msg.data = f"Hello! It's time for your {reminder}. " \
+                       f"Would you like me to bring you water?"
+            self.speech_pub.publish(msg)
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = MedicationReminderNode()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+---
+
+## 2.7 User Acceptance Factors
+
+### Technology Acceptance Model (TAM)
+
+**Key Factors** influencing humanoid robot adoption [2, Slides 60-65]:
+
+1. **Perceived Usefulness**: Does the robot actually help?
+   - Metric: Task completion rate, time savings
+   - Example: Cleaning robot reduces chore time by 3 hours/week
+
+2. **Perceived Ease of Use**: How simple is interaction?
+   - Metric: Setup time, learning curve
+   - Example: Voice commands vs. programming
+
+3. **Trust**: Will the robot act safely and predictably?
+   - Metric: Accident rate, consistency
+   - Example: 10,000 hours without collision
+
+4. **Social Acceptance**: Is it culturally appropriate?
+   - Varies by culture: Japan > USA > Germany in robot acceptance
+   - Design considerations: Privacy, anthropomorphism level
+
+5. **Cost-Benefit**: Worth the price?
+   - **Current**: $90k (Unitree H1) → Limited to research
+   - **Target**: $20k (Tesla Optimus) → Consumer market viable
+
+### Design Guidelines
+
+**DO**:
+- ✅ Clear feedback (LEDs, sounds) for robot state
+- ✅ Emergency stop button (accessible)
+- ✅ Gradual autonomy (start supervised, increase over time)
+- ✅ Transparent data usage (privacy policy)
+
+**DON'T**:
+- ❌ Overpromise capabilities (disappointment → rejection)
+- ❌ Unpredictable behavior (trust erosion)
+- ❌ Uncanny appearance (unless hyperrealistic)
+- ❌ Ignore cultural norms (personal space, eye contact)
+
+---
+
+## 2.8 Lab: Build a Voice-Controlled Assistant
+
+### Objective
+Create a multi-node system where a humanoid robot:
+1. Listens to voice commands (Whisper)
+2. Processes with conversational AI (GPT-4)
+3. Responds verbally (TTS)
+4. Reacts to gestures (MediaPipe)
+
+### Architecture
+
+```
+[Microphone] → [Whisper ASR] → /voice_command
+                                      ↓
+                               [GPT-4 Dialogue] → /robot_response
+                                      ↑                 ↓
+[Camera] → [Gesture Recognition]     |           [TTS Speaker]
+                ↓                     |
+           /gesture_command →─────────┘
+```
+
+### Launch All Nodes
+
+```bash
+# Terminal 1: Speech recognition
+python3 speech_recognition_node.py
+
+# Terminal 2: Text-to-speech
+python3 text_to_speech_node.py
+
+# Terminal 3: Gesture recognition
+python3 gesture_recognition_node.py
+
+# Terminal 4: Conversational AI
+export OPENAI_API_KEY="sk-..."
+python3 conversational_ai_node.py
+```
+
+### Test Interactions
+
+**Voice Command**: "Hello, how are you today?"
+**Robot Response**: "I'm doing great! How can I assist you?"
+
+**Gesture**: Wave hand
+**Robot Response**: "Hello! Nice to see you!"
+
+**Voice Command**: "I'm feeling sad."
+**Robot Response** (emotion-aware): "I'm sorry to hear that. Would you like to talk about it, or should I play some uplifting music?"
+
+---
+
+## Exercises
+
+### Basic (40%)
+1. **Install** Whisper and transcribe a 30-second audio clip. Report word error rate (WER) compared to ground truth.
+
+2. **Modify** the TTS node to support multiple languages (English, Spanish, Urdu). Test with sample phrases.
+
+3. **Implement** a simple gesture recognizer for "thumbs up" and "thumbs down". Publish approval/disapproval messages.
+
+### Intermediate (40%)
+4. **Integrate** emotion detection with conversational AI. Robot should respond differently to happy vs. sad users (change tone, suggestions).
+
+5. **Create** a medication reminder system that:
+   - Reminds user at 3 scheduled times
+   - Waits for verbal confirmation ("I took it")
+   - Logs adherence rate
+   - Alerts caregiver if 2 consecutive misses
+
+6. **Benchmark** Whisper models (tiny, base, small). Measure:
+   - Inference time (seconds per 10-second audio)
+   - Word error rate
+   - Memory usage (GB)
+   Plot results in a table.
+
+### Advanced (20%)
+7. **Multi-turn Dialogue**: Implement context tracking across conversation turns. Robot should remember user preferences (name, favorite activities) and reference them later.
+
+8. **Emotion-Adaptive Behavior**: Robot adjusts interaction style based on user emotion:
+   - Happy → Playful, jokes
+   - Sad → Empathetic, comforting
+   - Angry → Calm, de-escalating
+   Implement and demonstrate with 3 scenarios.
+
+9. **Capstone Integration**: Design the HRI module for your Week 13 project. Specify:
+   - Which speech/gesture commands to support
+   - Dialogue flow for task execution
+   - Error handling (e.g., user says "stop" mid-task)
+   Submit a state machine diagram.
+
+---
+
+## Further Reading
+
+- **Mori, M.** (1970). "The Uncanny Valley," *Energy*, vol. 7, no. 4, pp. 33-35.
+- **OpenAI Whisper**: https://github.com/openai/whisper
+- **DeepFace**: https://github.com/serengil/deepface
+- **MediaPipe**: https://google.github.io/mediapipe/
+
+---
+
+## Summary
+
+- **Realistic interaction** requires multimodal communication (speech, gesture, emotion)
+- **Uncanny Valley**: Design robots as clearly robotic or hyperrealistic, avoid the middle
+- **Speech**: Whisper (ASR) + gTTS (TTS) enable voice interaction
+- **Gestures**: MediaPipe detects hand poses for command input
+- **Emotions**: DeepFace recognizes 7 facial expressions for context-aware responses
+- **Conversational AI**: GPT-4 enables natural dialogue with emotion awareness
+- **Social robotics**: Elder care, therapy, customer service applications
+- **User acceptance**: Usefulness, ease of use, trust, social norms, cost
+
+**Next**: [Week 3-5: ROS 2 Fundamentals](./week-03)
+
+---
+
+## References
+
+[1] M. Mori, "The Uncanny Valley," *Energy*, vol. 7, no. 4, pp. 33-35, 1970. (Translated by K. F. MacDorman & N. Kageki, *IEEE Robotics & Automation Magazine*, 2012)
+
+[2] J. Rauf, "Exploring Humanoid Robots 8," OLLI Presentation, George Mason University, 2025.
+
+[3] China Unicom Research Institute, "Applications and Development Prospects of Humanoid Robots," 2025.
+
+---
+
+

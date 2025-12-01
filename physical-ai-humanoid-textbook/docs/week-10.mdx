@@ -1,0 +1,834 @@
+---
+id: week-10
+title: Advanced RL & Imitation Learning
+sidebar_label: Advanced RL & Imitation Learning
+sidebar_position: 10
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Week 10: Advanced RL & Imitation Learning
+
+## Learning Outcomes
+
+By the end of this module, you will be able to:
+
+1. **Implement** imitation learning algorithms (behavior cloning, DAgger)
+2. **Collect** human demonstrations via teleoperation
+3. **Train** policies from offline datasets
+4. **Apply** meta-learning for rapid task adaptation
+5. **Use** pre-trained foundation models for robotics
+6. **Combine** imitation and reinforcement learning
+
+---
+
+## 10.1 Imitation Learning
+
+### Why Imitation Learning?
+
+**Problem**: RL from scratch requires millions of samples (expensive, slow).
+
+**Solution**: Learn from human demonstrations.
+
+> **China Unicom (2025)**: "Imitation learning reduces training time by 10-100x compared to pure RL by bootstrapping from expert demonstrations. Industry deployments average 100-1000 demonstrations for manipulation tasks." [1, p. 82]
+
+### Behavior Cloning
+
+**Simplest approach**: Supervised learning from demonstrations.
+
+$$
+\pi_\theta = \arg\min_\theta \sum_{i=1}^{N} \| \pi_\theta(s_i) - a_i \|^2
+$$
+
+**Dataset**: $\mathcal{D} = \{(s_1, a_1), (s_2, a_2), ..., (s_N, a_N)\}$
+
+```python
+#!/usr/bin/env python3
+"""
+Behavior cloning: Learn policy from demonstrations.
+
+Reference: Pomerleau, "ALVINN: An Autonomous Land Vehicle in a Neural Network," 1989
+"""
+
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader
+import numpy as np
+
+
+class DemonstrationDataset(Dataset):
+    """Dataset of (state, action) pairs."""
+
+    def __init__(self, states, actions):
+        self.states = torch.FloatTensor(states)
+        self.actions = torch.FloatTensor(actions)
+
+    def __len__(self):
+        return len(self.states)
+
+    def __getitem__(self, idx):
+        return self.states[idx], self.actions[idx]
+
+
+class BehaviorCloningPolicy(nn.Module):
+    """Neural network policy for imitation learning."""
+
+    def __init__(self, obs_dim, act_dim):
+        super().__init__()
+
+        self.network = nn.Sequential(
+            nn.Linear(obs_dim, 256),
+            nn.ReLU(),
+            nn.Linear(256, 256),
+            nn.ReLU(),
+            nn.Linear(256, 128),
+            nn.ReLU(),
+            nn.Linear(128, act_dim),
+            nn.Tanh()  # Actions in [-1, 1]
+        )
+
+    def forward(self, obs):
+        return self.network(obs)
+
+
+def train_behavior_cloning(demonstrations, num_epochs=100):
+    """
+    Train policy via behavior cloning.
+
+    Args:
+        demonstrations: Dict with 'observations' and 'actions' (numpy arrays)
+        num_epochs: Training epochs
+
+    Returns:
+        Trained policy
+    """
+    obs_dim = demonstrations['observations'].shape[1]
+    act_dim = demonstrations['actions'].shape[1]
+
+    # Create dataset
+    dataset = DemonstrationDataset(
+        demonstrations['observations'],
+        demonstrations['actions']
+    )
+    dataloader = DataLoader(dataset, batch_size=256, shuffle=True)
+
+    # Initialize policy
+    policy = BehaviorCloningPolicy(obs_dim, act_dim).cuda()
+    optimizer = optim.Adam(policy.parameters(), lr=1e-3)
+    loss_fn = nn.MSELoss()
+
+    # Training loop
+    for epoch in range(num_epochs):
+        total_loss = 0.0
+
+        for batch_obs, batch_actions in dataloader:
+            batch_obs = batch_obs.cuda()
+            batch_actions = batch_actions.cuda()
+
+            # Forward pass
+            predicted_actions = policy(batch_obs)
+
+            # Compute loss
+            loss = loss_fn(predicted_actions, batch_actions)
+
+            # Backward pass
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            total_loss += loss.item()
+
+        avg_loss = total_loss / len(dataloader)
+        print(f"Epoch {epoch+1}/{num_epochs} | Loss: {avg_loss:.4f}")
+
+    return policy
+
+
+# Usage
+if __name__ == "__main__":
+    # Load demonstrations (from rosbag or teleoperation)
+    demonstrations = np.load('humanoid_demonstrations.npz')
+
+    policy = train_behavior_cloning(demonstrations, num_epochs=100)
+
+    # Save policy
+    torch.save(policy.state_dict(), 'bc_policy.pth')
+```
+
+---
+
+## 10.2 Collecting Demonstrations
+
+### Teleoperation Interface
+
+```python
+#!/usr/bin/env python3
+"""
+VR-based teleoperation for data collection.
+Uses motion capture to map human motions to robot.
+
+Reference: Mandlekar et al., "What Matters in Learning from Offline Human
+           Demonstrations," CoRL 2021
+"""
+
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import JointState
+import numpy as np
+import pickle
+from datetime import datetime
+
+
+class TeleoperationRecorder(Node):
+    """Record teleoperation demonstrations."""
+
+    def __init__(self):
+        super().__init__('teleoperation_recorder')
+
+        # Subscribe to joint states (from teleoperation)
+        self.joint_sub = self.create_subscription(
+            JointState,
+            '/joint_states',
+            self.joint_callback,
+            10
+        )
+
+        # Subscribe to camera (visual observations)
+        self.camera_sub = self.create_subscription(
+            Image,
+            '/camera/image_raw',
+            self.camera_callback,
+            10
+        )
+
+        # Storage
+        self.observations = []
+        self.actions = []
+        self.timestamps = []
+
+        self.is_recording = False
+
+        # Service to start/stop recording
+        self.start_srv = self.create_service(
+            Empty,
+            'start_recording',
+            self.start_recording
+        )
+        self.stop_srv = self.create_service(
+            Empty,
+            'stop_recording',
+            self.stop_recording
+        )
+
+        self.get_logger().info('Teleoperation recorder ready')
+
+    def joint_callback(self, msg):
+        """Record joint states as actions."""
+        if not self.is_recording:
+            return
+
+        self.actions.append({
+            'positions': np.array(msg.position),
+            'velocities': np.array(msg.velocity),
+            'efforts': np.array(msg.effort)
+        })
+
+        self.timestamps.append(self.get_clock().now().nanoseconds)
+
+    def camera_callback(self, msg):
+        """Record camera images as observations."""
+        if not self.is_recording:
+            return
+
+        # Convert image to numpy
+        image = self.bridge.imgmsg_to_cv2(msg, 'rgb8')
+        self.observations.append(image)
+
+    def start_recording(self, request, response):
+        """Start recording demonstration."""
+        self.is_recording = True
+        self.get_logger().info('🔴 Recording started')
+        return response
+
+    def stop_recording(self, request, response):
+        """Stop and save demonstration."""
+        self.is_recording = False
+
+        # Save to file
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f'demonstration_{timestamp}.pkl'
+
+        data = {
+            'observations': self.observations,
+            'actions': self.actions,
+            'timestamps': self.timestamps
+        }
+
+        with open(filename, 'wb') as f:
+            pickle.dump(data, f)
+
+        self.get_logger().info(f'💾 Saved {len(self.actions)} steps to {filename}')
+
+        # Clear buffers
+        self.observations.clear()
+        self.actions.clear()
+        self.timestamps.clear()
+
+        return response
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = TeleoperationRecorder()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+**Workflow**:
+```bash
+# Terminal 1: Recorder
+python teleoperation_recorder.py
+
+# Terminal 2: Teleoperation interface (VR, keyboard, or motion capture)
+ros2 run humanoid_teleop vr_teleop
+
+# Terminal 3: Start recording
+ros2 service call /start_recording std_srvs/srv/Empty
+
+# Perform task demonstration...
+
+# Terminal 3: Stop recording
+ros2 service call /stop_recording std_srvs/srv/Empty
+```
+
+---
+
+## 10.3 DAgger: Dataset Aggregation
+
+**Problem**: Behavior cloning suffers from distribution shift—policy encounters states not in demonstrations.
+
+**Solution**: DAgger [2] iteratively collects data at states visited by the learned policy.
+
+### Algorithm
+
+```
+1. Collect initial demonstrations: D = {(s, a_expert)}
+2. Train policy: π ← BehaviorCloning(D)
+3. Repeat:
+     a. Execute π, collect states: S_new = {s_1, s_2, ..., s_n}
+     b. Query expert for actions on S_new: A_expert
+     c. Augment dataset: D ← D ∪ {(S_new, A_expert)}
+     d. Retrain policy: π ← BehaviorCloning(D)
+```
+
+### Implementation
+
+```python
+#!/usr/bin/env python3
+"""
+DAgger: Interactive imitation learning.
+
+Reference: Ross et al., "A Reduction of Imitation Learning and Structured
+           Prediction to No-Regret Online Learning," AISTATS 2011
+"""
+
+import torch
+import numpy as np
+
+
+def dagger_training(env, expert_policy, num_iterations=10, rollouts_per_iter=20):
+    """
+    DAgger algorithm.
+
+    Args:
+        env: Gym-like environment
+        expert_policy: Function mapping states to actions
+        num_iterations: DAgger iterations
+        rollouts_per_iter: Rollouts per iteration
+
+    Returns:
+        Trained policy
+    """
+    from behavior_cloning import BehaviorCloningPolicy, train_behavior_cloning
+
+    # Initialize empty dataset
+    all_observations = []
+    all_actions = []
+
+    # Collect initial expert demonstrations
+    for _ in range(rollouts_per_iter):
+        obs = env.reset()
+        done = False
+
+        while not done:
+            # Expert action
+            action = expert_policy(obs)
+
+            all_observations.append(obs)
+            all_actions.append(action)
+
+            obs, _, done, _ = env.step(action)
+
+    # Initialize policy
+    policy = BehaviorCloningPolicy(obs_dim=env.observation_space.shape[0],
+                                    act_dim=env.action_space.shape[0])
+
+    # DAgger iterations
+    for iteration in range(num_iterations):
+        print(f"\n=== DAgger Iteration {iteration+1}/{num_iterations} ===")
+
+        # Train policy on current dataset
+        dataset = {
+            'observations': np.array(all_observations),
+            'actions': np.array(all_actions)
+        }
+        policy = train_behavior_cloning(dataset, num_epochs=50)
+
+        # Collect new data with learned policy
+        new_obs = []
+        new_actions_expert = []
+
+        for _ in range(rollouts_per_iter):
+            obs = env.reset()
+            done = False
+
+            while not done:
+                # Learned policy action
+                with torch.no_grad():
+                    obs_tensor = torch.FloatTensor(obs).unsqueeze(0).cuda()
+                    action_learned = policy(obs_tensor).cpu().numpy()[0]
+
+                # Get expert action for this state
+                action_expert = expert_policy(obs)
+
+                # Store expert action (key difference from pure BC)
+                new_obs.append(obs)
+                new_actions_expert.append(action_expert)
+
+                # Execute learned action
+                obs, _, done, _ = env.step(action_learned)
+
+        # Aggregate dataset
+        all_observations.extend(new_obs)
+        all_actions.extend(new_actions_expert)
+
+        print(f"Dataset size: {len(all_observations)} transitions")
+
+    return policy
+```
+
+---
+
+## 10.4 Offline RL
+
+### Learning from Static Datasets
+
+**Offline RL** [3]: Learn from fixed dataset (no environment interaction during training).
+
+**Use Cases**:
+- Historical robot logs
+- Human teleoperation data
+- Simulation data
+- Safety-critical systems (can't afford online exploration)
+
+### Conservative Q-Learning (CQL)
+
+```python
+#!/usr/bin/env python3
+"""
+Conservative Q-Learning for offline RL.
+
+Reference: Kumar et al., "Conservative Q-Learning for Offline Reinforcement
+           Learning," NeurIPS 2020
+"""
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import numpy as np
+
+
+class QNetwork(nn.Module):
+    """Q-function approximator."""
+
+    def __init__(self, obs_dim, act_dim):
+        super().__init__()
+
+        self.net = nn.Sequential(
+            nn.Linear(obs_dim + act_dim, 256),
+            nn.ReLU(),
+            nn.Linear(256, 256),
+            nn.ReLU(),
+            nn.Linear(256, 1)
+        )
+
+    def forward(self, obs, action):
+        """Compute Q(s, a)."""
+        x = torch.cat([obs, action], dim=-1)
+        return self.net(x)
+
+
+class CQL:
+    """Conservative Q-Learning algorithm."""
+
+    def __init__(self, obs_dim, act_dim, alpha=1.0):
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        # Q-networks (double Q-learning)
+        self.q1 = QNetwork(obs_dim, act_dim).to(self.device)
+        self.q2 = QNetwork(obs_dim, act_dim).to(self.device)
+
+        # Target networks
+        self.q1_target = QNetwork(obs_dim, act_dim).to(self.device)
+        self.q2_target = QNetwork(obs_dim, act_dim).to(self.device)
+        self.q1_target.load_state_dict(self.q1.state_dict())
+        self.q2_target.load_state_dict(self.q2.state_dict())
+
+        # Optimizers
+        self.q1_optimizer = optim.Adam(self.q1.parameters(), lr=3e-4)
+        self.q2_optimizer = optim.Adam(self.q2.parameters(), lr=3e-4)
+
+        self.alpha = alpha  # CQL regularization strength
+
+    def update(self, batch):
+        """CQL update step."""
+        obs = torch.FloatTensor(batch['observations']).to(self.device)
+        actions = torch.FloatTensor(batch['actions']).to(self.device)
+        rewards = torch.FloatTensor(batch['rewards']).to(self.device)
+        next_obs = torch.FloatTensor(batch['next_observations']).to(self.device)
+        dones = torch.FloatTensor(batch['dones']).to(self.device)
+
+        # Compute target Q-values
+        with torch.no_grad():
+            # Next actions from current policy (placeholder: use dataset actions)
+            next_actions = actions  # Simplified
+
+            next_q1 = self.q1_target(next_obs, next_actions)
+            next_q2 = self.q2_target(next_obs, next_actions)
+            next_q = torch.min(next_q1, next_q2)
+
+            target_q = rewards + (1 - dones) * 0.99 * next_q
+
+        # Current Q-values
+        current_q1 = self.q1(obs, actions)
+        current_q2 = self.q2(obs, actions)
+
+        # Bellman error
+        q1_loss = F.mse_loss(current_q1, target_q)
+        q2_loss = F.mse_loss(current_q2, target_q)
+
+        # CQL regularization: Penalize Q-values on out-of-distribution actions
+        random_actions = torch.FloatTensor(obs.shape[0], actions.shape[1]).uniform_(-1, 1).to(self.device)
+
+        q1_rand = self.q1(obs, random_actions)
+        q2_rand = self.q2(obs, random_actions)
+
+        cql_loss = torch.logsumexp(q1_rand, dim=0).mean() + torch.logsumexp(q2_rand, dim=0).mean()
+        cql_loss -= current_q1.mean() + current_q2.mean()
+
+        # Total loss
+        total_q1_loss = q1_loss + self.alpha * cql_loss
+        total_q2_loss = q2_loss + self.alpha * cql_loss
+
+        # Optimize Q1
+        self.q1_optimizer.zero_grad()
+        total_q1_loss.backward()
+        self.q1_optimizer.step()
+
+        # Optimize Q2
+        self.q2_optimizer.zero_grad()
+        total_q2_loss.backward()
+        self.q2_optimizer.step()
+
+        # Soft update targets
+        tau = 0.005
+        for param, target_param in zip(self.q1.parameters(), self.q1_target.parameters()):
+            target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
+        for param, target_param in zip(self.q2.parameters(), self.q2_target.parameters()):
+            target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
+
+        return {
+            'q1_loss': q1_loss.item(),
+            'cql_loss': cql_loss.item()
+        }
+```
+
+---
+
+## 10.5 Foundation Models for Robotics
+
+### RT-2: Robotics Transformer 2
+
+**RT-2** [4] transfers web knowledge to robotic control via VLA architecture.
+
+**Architecture**:
+```
+Internet Images + Text → Pre-trained VLM (e.g., PaLI-X 55B)
+                              ↓
+                    + Robot Demonstrations (800 tasks)
+                              ↓
+                         Fine-tuned RT-2
+                              ↓
+                   Image + Language Command → Action Tokens
+```
+
+**Key Insight**: Web-scale pre-training provides common-sense reasoning (e.g., "an apple is food," "a mug has a handle").
+
+### Using RT-2 API (Hypothetical)
+
+```python
+#!/usr/bin/env python3
+"""
+RT-2 inference for robot control.
+
+Note: RT-2 is not publicly available as of 2025.
+This demonstrates the interface pattern.
+"""
+
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import Image
+from std_msgs.msg import String
+from trajectory_msgs.msg import JointTrajectory
+from cv_bridge import CvBridge
+import numpy as np
+
+
+class RT2PolicyNode(Node):
+    """RT-2-based robot controller."""
+
+    def __init__(self):
+        super().__init__('rt2_policy')
+
+        # Subscribe to camera and task command
+        self.image_sub = self.create_subscription(
+            Image,
+            '/camera/image_raw',
+            self.image_callback,
+            10
+        )
+
+        self.task_sub = self.create_subscription(
+            String,
+            '/task_command',
+            self.task_callback,
+            10
+        )
+
+        # Publish joint trajectory
+        self.traj_pub = self.create_publisher(
+            JointTrajectory,
+            '/joint_trajectory',
+            10
+        )
+
+        self.bridge = CvBridge()
+        self.latest_image = None
+
+        # RT-2 model (hypothetical API)
+        self.rt2_model = RT2Model(checkpoint="rt2_55b")
+
+        self.get_logger().info('RT-2 policy node ready')
+
+    def image_callback(self, msg):
+        """Store latest image."""
+        self.latest_image = self.bridge.imgmsg_to_cv2(msg, 'rgb8')
+
+    def task_callback(self, msg):
+        """Execute task using RT-2."""
+        task_command = msg.data
+        self.get_logger().info(f'Task: "{task_command}"')
+
+        if self.latest_image is None:
+            self.get_logger().warn('No camera image available')
+            return
+
+        # RT-2 inference
+        action = self.rt2_model.predict(
+            image=self.latest_image,
+            instruction=task_command
+        )
+
+        # Convert action tokens to joint trajectory
+        trajectory = self.action_to_trajectory(action)
+
+        # Publish
+        self.traj_pub.publish(trajectory)
+
+    def action_to_trajectory(self, action_tokens):
+        """
+        Convert RT-2 action tokens to joint trajectory.
+
+        RT-2 outputs: Discretized action space (e.g., 256 bins per dimension)
+        """
+        # Decode action tokens to continuous values
+        # (Simplified - real RT-2 has learned tokenization)
+
+        joint_positions = action_tokens[:19]  # First 19 for legs
+        gripper_position = action_tokens[19]  # Gripper
+
+        # Create trajectory message
+        traj = JointTrajectory()
+        traj.joint_names = [f'joint_{i}' for i in range(20)]
+
+        point = JointTrajectoryPoint()
+        point.positions = joint_positions.tolist() + [gripper_position]
+        point.time_from_start.sec = 1  # Execute in 1 second
+
+        traj.points = [point]
+
+        return traj
+
+
+class RT2Model:
+    """Hypothetical RT-2 model interface."""
+
+    def __init__(self, checkpoint):
+        # Load pre-trained weights
+        pass
+
+    def predict(self, image, instruction):
+        """
+        Predict action from image and language instruction.
+
+        Args:
+            image: RGB image (H, W, 3)
+            instruction: Natural language string
+
+        Returns:
+            Action tokens (discretized action space)
+        """
+        # Placeholder
+        return np.random.rand(20)  # 19 joints + gripper
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = RT2PolicyNode()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+---
+
+## 10.6 Combining Imitation and RL
+
+### RLHF: Reinforcement Learning from Human Feedback
+
+**Approach**:
+1. Pre-train with behavior cloning
+2. Fine-tune with RL (rewards from human feedback)
+
+```python
+def rlhf_training(env, demonstrations, num_rl_steps=1_000_000):
+    """Combine imitation and reinforcement learning."""
+
+    # Phase 1: Behavior cloning
+    policy = train_behavior_cloning(demonstrations, num_epochs=100)
+
+    # Phase 2: RL fine-tuning
+    ppo = PPO(policy=policy)  # Initialize PPO with pre-trained policy
+
+    obs = env.reset()
+    for step in range(num_rl_steps):
+        action = policy.get_action(obs)
+        next_obs, reward, done, _ = env.step(action)
+
+        # Store transition for PPO update
+        # ...
+
+        # Periodically ask human for feedback
+        if step % 1000 == 0:
+            human_reward = query_human_feedback(obs, action)  # Manual labeling
+            # Use human reward to update policy
+
+        obs = next_obs if not done else env.reset()
+
+    return policy
+```
+
+---
+
+## Exercises
+
+### Basic (40%)
+1. **Collect** 10 demonstrations of a simple task (arm reaching) using keyboard teleoperation. Save as `.npz` file.
+
+2. **Train** a behavior cloning policy from your demonstrations. Evaluate on 20 test episodes. Report success rate.
+
+3. **Implement** DAgger for 3 iterations. Compare performance with pure behavior cloning (plot success rate vs. iteration).
+
+### Intermediate (40%)
+4. **Train** PPO for humanoid standing balance:
+   - Observation: Joint angles, IMU
+   - Action: Joint torques
+   - Reward: Upright orientation, minimize joint torques
+   - Train for 1M steps
+   - Evaluate: Average upright time before falling
+
+5. **Offline RL**: Collect a dataset of 10k transitions from a random policy. Train CQL policy. Compare with online PPO (same compute budget).
+
+6. **Foundation model integration**:
+   - Use CLIP to encode visual observations
+   - Train a small policy network on top of frozen CLIP features
+   - Compare with end-to-end training
+
+### Advanced (20%)
+7. **Meta-learning**: Train a policy that adapts quickly to new tasks:
+   - Use MAML (Model-Agnostic Meta-Learning)
+   - Train on 5 related tasks (walk forward, backward, left, right, turn)
+   - Test rapid adaptation to new task (walk in circle) with 10 gradient steps
+
+8. **Human-in-the-loop**: Implement active learning:
+   - Policy queries human when uncertain (low action probability)
+   - Collect targeted demonstrations on hard states
+   - Measure sample efficiency vs. uniform demonstration collection
+
+9. **Capstone Integration**:
+   - Collect 50 demonstrations of "pick up mug" via teleoperation
+   - Train behavior cloning policy
+   - Fine-tune with RL (reward: grasp success)
+   - Achieve >90% success rate
+   - Submit: Policy, evaluation results, video
+
+---
+
+## Summary
+
+- **Imitation learning** bootstraps policies from expert demonstrations
+- **Behavior cloning**: Supervised learning (simple but suffers from distribution shift)
+- **DAgger**: Interactive correction reduces distribution shift
+- **Offline RL**: Learn from static datasets (safe, but requires careful regularization)
+- **CQL**: Conservative Q-learning prevents overestimation on out-of-distribution actions
+- **Foundation models** (RT-2, PaLM-E) transfer web knowledge to robotics
+- **Hybrid approaches**: Pre-train with imitation, fine-tune with RL
+
+**Next**: [Week 11-12: Humanoid Kinematics & VLA Models](./week-11)
+
+---
+
+## References
+
+[1] China Unicom Research Institute, "Applications and Development Prospects of Humanoid Robots," 2025, p. 82.
+
+[2] S. Ross et al., "A Reduction of Imitation Learning and Structured Prediction to No-Regret Online Learning," *AISTATS*, 2011.
+
+[3] A. Kumar et al., "Conservative Q-Learning for Offline Reinforcement Learning," *NeurIPS*, 2020.
+
+[4] A. Brohan et al., "RT-2: Vision-Language-Action Models Transfer Web Knowledge to Robotic Control," arXiv:2307.15818, 2023.
+
+---
+
+

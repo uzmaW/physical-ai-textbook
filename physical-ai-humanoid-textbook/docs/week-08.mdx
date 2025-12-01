@@ -1,0 +1,816 @@
+---
+id: week-08
+title: NVIDIA Isaac Sim & Isaac ROS
+sidebar_label: NVIDIA Isaac Sim & Isaac ROS
+sidebar_position: 8
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Week 8: NVIDIA Isaac Sim & Isaac ROS
+
+## Learning Outcomes
+
+By the end of this module, you will be able to:
+
+1. **Install** and configure NVIDIA Isaac Sim on Ubuntu 22.04
+2. **Create** photorealistic simulation environments with USD format
+3. **Integrate** Isaac Sim with ROS 2 for robot control
+4. **Use** Isaac ROS for GPU-accelerated perception
+5. **Benchmark** performance gains from GPU acceleration
+6. **Prepare** environments for large-scale RL training
+
+---
+
+## 8.1 Isaac Sim Overview
+
+### GPU-Accelerated Simulation
+
+**NVIDIA Isaac Sim** leverages GPUs for both rendering and physics [1]:
+
+| Component | Gazebo (CPU) | Isaac Sim (GPU) |
+|-----------|--------------|-----------------|
+| Rendering | OGRE | RTX Ray Tracing |
+| Physics | ODE (single-threaded) | PhysX (massively parallel) |
+| Parallel Envs | 1 | 1000s |
+| Photorealism | Low | High (path tracing) |
+| RL Training Speed | Baseline | 100-1000x faster |
+
+> **China Unicom (2025)**: "GPU-based simulation enables training 4096 parallel humanoid environments on a single RTX 4090, achieving 10M samples in 2-3 hours—a task requiring weeks on CPU." [2, p. 78]
+
+### USD: Universal Scene Description
+
+Isaac Sim uses **USD** (Pixar's format) instead of SDF/URDF:
+
+**Benefits**:
+- Hierarchical composition (layers, variants)
+- Efficient for large scenes
+- Industry standard (VFX, gaming)
+- Advanced materials (PBR shaders)
+
+---
+
+## 8.2 Installation
+
+### Docker Method (Recommended)
+
+```bash
+# Pull Isaac Sim container
+docker pull nvcr.io/nvidia/isaac-sim:2023.1.1
+
+# Run with GUI support
+docker run --name isaac-sim \
+  --entrypoint bash \
+  -it \
+  --gpus all \
+  -e "ACCEPT_EULA=Y" \
+  -e "PRIVACY_CONSENT=Y" \
+  --rm \
+  --network=host \
+  -e DISPLAY=$DISPLAY \
+  -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
+  -v ~/isaac-sim-data:/root/Documents:rw \
+  nvcr.io/nvidia/isaac-sim:2023.1.1
+
+# Inside container
+./runapp.sh  # Launch GUI
+```
+
+### Native Installation
+
+```bash
+# Download Omniverse Launcher
+wget https://install.launcher.omniverse.nvidia.com/installers/omniverse-launcher-linux.AppImage
+
+chmod +x omniverse-launcher-linux.AppImage
+./omniverse-launcher-linux.AppImage
+
+# In Launcher:
+# 1. Navigate to "Exchange"
+# 2. Install "Isaac Sim" (2023.1.1+)
+# 3. Launch from Library
+```
+
+---
+
+## 8.3 First Isaac Sim Script
+
+### Spawn Humanoid Robot
+
+```python
+#!/usr/bin/env python3
+"""
+Isaac Sim: Spawn Unitree H1 humanoid and apply simple control.
+
+Reference: NVIDIA Isaac Sim Python API
+https://docs.omniverse.nvidia.com/isaacsim/latest/
+"""
+
+from isaacsim import SimulationApp
+
+# Must create SimulationApp before importing other Isaac modules
+simulation_app = SimulationApp({"headless": False})
+
+import numpy as np
+from omni.isaac.core import World
+from omni.isaac.core.utils.stage import add_reference_to_stage
+from omni.isaac.core.utils.nucleus import get_assets_root_path
+from omni.isaac.core.articulations import Articulation
+import carb
+
+
+def main():
+    # Create world with PhysX
+    world = World(stage_units_in_meters=1.0)
+    world.scene.add_default_ground_plane()
+
+    # Get Nucleus assets (NVIDIA cloud storage)
+    assets_root = get_assets_root_path()
+    if assets_root is None:
+        carb.log_error("Could not find Nucleus server. Install Omniverse Launcher.")
+        simulation_app.close()
+        return
+
+    # Path to Unitree H1 robot
+    h1_usd_path = assets_root + "/Isaac/Robots/Unitree/H1/h1.usd"
+
+    # Add robot to scene
+    add_reference_to_stage(usd_path=h1_usd_path, prim_path="/World/H1")
+
+    # Reset world (initializes physics)
+    world.reset()
+
+    # Get robot articulation
+    h1_robot = world.scene.get_object("/World/H1")
+    print(f"Robot loaded: {h1_robot.name}")
+    print(f"Number of DOF: {h1_robot.num_dof}")
+    print(f"Joint names: {h1_robot.dof_names}")
+
+    # Simulation loop
+    for i in range(1000):
+        # Step simulation
+        world.step(render=True)
+
+        # Get state
+        positions = h1_robot.get_joint_positions()
+        velocities = h1_robot.get_joint_velocities()
+
+        # Simple sinusoidal motion (demo)
+        time = i * 0.01  # 100 Hz
+        targets = 0.1 * np.sin(time * np.ones(h1_robot.num_dof))
+
+        # Set target positions
+        h1_robot.set_joint_position_targets(targets)
+
+        # Print status every 100 steps
+        if i % 100 == 0:
+            com_pos, com_vel = h1_robot.get_linear_velocity()
+            print(f"Step {i}: CoM velocity = {com_vel[0]:.3f} m/s")
+
+    print("Simulation finished")
+    simulation_app.close()
+
+
+if __name__ == "__main__":
+    main()
+```
+
+**Run**:
+```bash
+python humanoid_isaac_sim.py
+```
+
+---
+
+## 8.4 Isaac ROS: GPU Perception
+
+### Perception Pipeline
+
+```
+[Camera] → [Rectification] → [DNN Inference] → [Object Detection]
+  (GPU)        (GPU)              (GPU)              (GPU)
+```
+
+**Performance**: 60+ FPS on RTX 3060, 120+ FPS on RTX 4090.
+
+### Installation
+
+```bash
+# Install Isaac ROS packages
+sudo apt install ros-humble-isaac-ros-visual-slam \
+                 ros-humble-isaac-ros-dnn-inference \
+                 ros-humble-isaac-ros-image-pipeline
+
+# Or build from source
+cd ~/ros2_ws/src
+git clone --recursive https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_common.git
+git clone --recursive https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_dnn_inference.git
+git clone --recursive https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_image_pipeline.git
+
+cd ~/ros2_ws
+colcon build --symlink-install
+```
+
+### Isaac ROS DNN Inference
+
+```yaml
+# dnn_inference.yaml
+# Configure YOLO v8 for object detection
+
+dnn_image_encoder:
+  ros__parameters:
+    network_image_width: 640
+    network_image_height: 640
+    encoder_image_mean: [0.0, 0.0, 0.0]
+    encoder_image_stddev: [1.0, 1.0, 1.0]
+
+tensor_rt_node:
+  ros__parameters:
+    model_file_path: "/workspaces/isaac_ros-dev/models/yolov8/yolov8n.onnx"
+    engine_file_path: "/workspaces/isaac_ros-dev/models/yolov8/yolov8n.plan"
+    input_tensor_names: ["images"]
+    input_binding_names: ["images"]
+    output_tensor_names: ["output0"]
+    output_binding_names: ["output0"]
+    force_engine_update: false
+    verbose: false
+
+yolov8_decoder:
+  ros__parameters:
+    confidence_threshold: 0.5
+    nms_threshold: 0.45
+```
+
+**Launch**:
+```bash
+ros2 launch isaac_ros_yolov8 isaac_ros_yolov8.launch.py
+```
+
+---
+
+## 8.5 ROS 2 Bridge in Isaac Sim
+
+### Enabling ROS 2 Communication
+
+```python
+#!/usr/bin/env python3
+"""
+Isaac Sim with ROS 2 bridge.
+Publishes camera images, subscribes to velocity commands.
+"""
+
+from isaacsim import SimulationApp
+simulation_app = SimulationApp({"headless": False})
+
+from omni.isaac.core import World
+from omni.isaac.core.robots import Robot
+from omni.isaac.core.utils.stage import add_reference_to_stage
+
+# Enable ROS 2 bridge extension
+from omni.isaac.core.utils.extensions import enable_extension
+enable_extension("omni.isaac.ros2_bridge")
+
+# Import ROS 2 components
+from omni.isaac.ros2_bridge import ROS2Bridge
+
+
+def main():
+    world = World()
+
+    # Add ground and robot
+    world.scene.add_default_ground_plane()
+    add_reference_to_stage(
+        usd_path="omniverse://localhost/NVIDIA/Assets/Isaac/2023.1.1/Isaac/Robots/Unitree/H1/h1.usd",
+        prim_path="/World/H1"
+    )
+
+    # Initialize ROS 2 bridge
+    ros_bridge = ROS2Bridge()
+
+    # Add camera publisher
+    ros_bridge.create_camera_publisher(
+        camera_prim_path="/World/H1/head/camera",
+        topic_name="/camera/image_raw",
+        publish_rate=30.0
+    )
+
+    # Add joint state publisher
+    ros_bridge.create_joint_state_publisher(
+        robot_prim_path="/World/H1",
+        topic_name="/joint_states",
+        publish_rate=50.0
+    )
+
+    # Add IMU publisher
+    ros_bridge.create_imu_sensor_publisher(
+        imu_prim_path="/World/H1/torso/imu",
+        topic_name="/imu/data",
+        publish_rate=100.0
+    )
+
+    # Add velocity command subscriber
+    ros_bridge.create_twist_subscriber(
+        topic_name="/cmd_vel",
+        callback=lambda msg: handle_velocity_command(msg, world)
+    )
+
+    # Reset and run
+    world.reset()
+
+    for i in range(10000):
+        world.step(render=True)
+
+        if i % 100 == 0:
+            print(f"Step {i}: Simulation running")
+
+    simulation_app.close()
+
+
+def handle_velocity_command(twist_msg, world):
+    """Convert Twist to robot velocities."""
+    # Get robot
+    robot = world.scene.get_object("/World/H1")
+
+    # Simple velocity mapping (placeholder)
+    linear_x = twist_msg.linear.x
+    angular_z = twist_msg.angular.z
+
+    # Set base velocity (would need proper controller)
+    robot.set_linear_velocity([linear_x, 0.0, 0.0])
+    robot.set_angular_velocity([0.0, 0.0, angular_z])
+
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+## 8.6 Isaac ROS Benchmark
+
+### CPU vs. GPU Perception
+
+```python
+#!/usr/bin/env python3
+"""
+Benchmark: CPU vs GPU object detection.
+Measures FPS and latency.
+"""
+
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import Image
+from vision_msgs.msg import Detection2DArray
+import time
+
+
+class PerceptionBenchmark(Node):
+    """Measure perception performance."""
+
+    def __init__(self):
+        super().__init__('perception_benchmark')
+
+        self.detection_sub = self.create_subscription(
+            Detection2DArray,
+            '/detections',
+            self.detection_callback,
+            10
+        )
+
+        self.image_sub = self.create_subscription(
+            Image,
+            '/camera/image_raw',
+            self.image_callback,
+            10
+        )
+
+        # Metrics
+        self.detection_timestamps = []
+        self.image_timestamps = []
+        self.latencies = []
+
+        # Timer: Report stats every 10 seconds
+        self.timer = self.create_timer(10.0, self.report_stats)
+
+    def image_callback(self, msg):
+        """Record image timestamps."""
+        self.image_timestamps.append(time.time())
+
+    def detection_callback(self, msg):
+        """Record detection timestamps and compute latency."""
+        now = time.time()
+        self.detection_timestamps.append(now)
+
+        # Compute latency (image capture to detection)
+        if self.image_timestamps:
+            latency = now - self.image_timestamps[-1]
+            self.latencies.append(latency)
+
+    def report_stats(self):
+        """Compute and report performance metrics."""
+        if len(self.detection_timestamps) < 2:
+            return
+
+        # FPS
+        time_span = self.detection_timestamps[-1] - self.detection_timestamps[0]
+        fps = len(self.detection_timestamps) / time_span
+
+        # Latency
+        avg_latency = np.mean(self.latencies) if self.latencies else 0.0
+        max_latency = np.max(self.latencies) if self.latencies else 0.0
+
+        self.get_logger().info(
+            f"Performance: {fps:.1f} FPS | "
+            f"Latency: avg={avg_latency*1000:.1f}ms, max={max_latency*1000:.1f}ms"
+        )
+
+        # Clear metrics
+        self.detection_timestamps.clear()
+        self.image_timestamps.clear()
+        self.latencies.clear()
+
+
+def main():
+    rclpy.init()
+    node = PerceptionBenchmark()
+
+    print("Benchmarking perception pipeline...")
+    print("Expected: CPU ~5-15 FPS, GPU ~60-120 FPS")
+
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+**Test**:
+```bash
+# Terminal 1: Launch Isaac ROS YOLO (GPU)
+ros2 launch isaac_ros_yolov8 isaac_ros_yolov8.launch.py
+
+# Terminal 2: Benchmark
+python perception_benchmark.py
+```
+
+**Expected Output**:
+```
+Performance: 87.3 FPS | Latency: avg=11.5ms, max=18.2ms
+```
+
+---
+
+## 8.7 Creating USD Environments
+
+### Kitchen Scene USD
+
+```python
+#!/usr/bin/env python3
+"""
+Programmatically create USD kitchen environment.
+"""
+
+from pxr import Usd, UsdGeom, Gf, UsdPhysics
+from isaacsim import SimulationApp
+
+simulation_app = SimulationApp({"headless": False})
+
+
+def create_kitchen_scene():
+    """Build kitchen scene in USD."""
+
+    # Create stage
+    stage = Usd.Stage.CreateNew("/tmp/kitchen_scene.usd")
+
+    # Define up axis and units
+    UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+
+    # Add default prim
+    default_prim = stage.DefinePrim("/World", "Xform")
+    stage.SetDefaultPrim(default_prim)
+
+    # Add ground plane
+    ground_path = "/World/Ground"
+    ground = UsdGeom.Mesh.Define(stage, ground_path)
+
+    # Plane geometry
+    points = [
+        Gf.Vec3f(-10, -10, 0),
+        Gf.Vec3f(10, -10, 0),
+        Gf.Vec3f(10, 10, 0),
+        Gf.Vec3f(-10, 10, 0)
+    ]
+    ground.GetPointsAttr().Set(points)
+    ground.GetFaceVertexCountsAttr().Set([4])
+    ground.GetFaceVertexIndicesAttr().Set([0, 1, 2, 3])
+
+    # Add physics
+    UsdPhysics.CollisionAPI.Apply(ground.GetPrim())
+    physicsScene = UsdPhysics.Scene.Define(stage, "/World/PhysicsScene")
+    physicsScene.CreateGravityDirectionAttr().Set(Gf.Vec3f(0.0, 0.0, -1.0))
+    physicsScene.CreateGravityMagnitudeAttr().Set(9.81)
+
+    # Add table
+    table_path = "/World/Table"
+    table = UsdGeom.Cube.Define(stage, table_path)
+    table.GetSizeAttr().Set(1.0)
+    table.AddTranslateOp().Set(Gf.Vec3d(2.0, 0.0, 0.5))
+    table.AddScaleOp().Set(Gf.Vec3f(1.2, 0.8, 0.05))  # Tabletop
+
+    UsdPhysics.CollisionAPI.Apply(table.GetPrim())
+    UsdPhysics.RigidBodyAPI.Apply(table.GetPrim())
+
+    # Add mug
+    mug_path = "/World/Mug"
+    mug = UsdGeom.Cylinder.Define(stage, mug_path)
+    mug.GetRadiusAttr().Set(0.04)
+    mug.GetHeightAttr().Set(0.12)
+    mug.AddTranslateOp().Set(Gf.Vec3d(2.0, 0.0, 0.85))
+
+    # Mug physics
+    UsdPhysics.CollisionAPI.Apply(mug.GetPrim())
+    rigid_body = UsdPhysics.RigidBodyAPI.Apply(mug.GetPrim())
+    UsdPhysics.MassAPI.Apply(mug.GetPrim()).GetMassAttr().Set(0.3)
+
+    # Save stage
+    stage.GetRootLayer().Save()
+    print("Kitchen scene created: /tmp/kitchen_scene.usd")
+
+    # Load in Isaac Sim
+    from omni.isaac.core.utils.stage import open_stage
+    open_stage("/tmp/kitchen_scene.usd")
+
+    # Run simulation
+    world = World.instance()
+    world.reset()
+
+    for i in range(500):
+        world.step(render=True)
+
+    simulation_app.close()
+
+
+if __name__ == "__main__":
+    create_kitchen_scene()
+```
+
+---
+
+## 8.8 Parallel Environments for RL
+
+### Vectorized Humanoid Env
+
+```python
+#!/usr/bin/env python3
+"""
+Massively parallel RL training in Isaac Sim.
+4096 humanoid robots training simultaneously.
+"""
+
+from isaacsim import SimulationApp
+simulation_app = SimulationApp({"headless": True})  # No GUI for speed
+
+import torch
+import numpy as np
+from omni.isaac.core import World
+from omni.isaac.core.utils.stage import add_reference_to_stage
+from omni.isaac.gym.vec_env import VecEnvBase
+
+
+class VectorizedHumanoidEnv(VecEnvBase):
+    """
+    4096 parallel humanoid environments.
+    Trains walking policy with PPO.
+    """
+
+    def __init__(self, num_envs=4096):
+        self.num_envs = num_envs
+        self.device = "cuda:0"
+
+        # Observation: 66 (joint pos + vel + IMU)
+        # Action: 19 (leg joints only for walking)
+        super().__init__(num_envs=num_envs, num_obs=66, num_actions=19, device=self.device)
+
+        # Create world
+        self.world = World(stage_units_in_meters=1.0, backend="torch", device=self.device)
+
+        # Spawn robots in grid
+        self._spawn_robots()
+
+        # Reset
+        self.world.reset()
+
+        print(f"Initialized {num_envs} parallel environments")
+
+    def _spawn_robots(self):
+        """Spawn humanoids in grid pattern."""
+        from omni.isaac.core.utils.nucleus import get_assets_root_path
+
+        assets_root = get_assets_root_path()
+        h1_path = assets_root + "/Isaac/Robots/Unitree/H1/h1.usd"
+
+        grid_size = int(np.sqrt(self.num_envs))
+        spacing = 5.0
+
+        for i in range(self.num_envs):
+            row = i // grid_size
+            col = i % grid_size
+
+            x = row * spacing - (grid_size * spacing / 2)
+            y = col * spacing - (grid_size * spacing / 2)
+
+            prim_path = f"/World/H1_{i}"
+            add_reference_to_stage(usd_path=h1_path, prim_path=prim_path)
+
+            # Set position
+            robot = self.world.scene.get_object(prim_path)
+            robot.set_world_pose(position=[x, y, 1.0])
+
+    def reset(self):
+        """Reset all environments."""
+        # Implementation...
+        pass
+
+    def step(self, actions):
+        """Apply actions and step all environments."""
+        # Implementation...
+        pass
+
+
+# Training with rl_games
+if __name__ == "__main__":
+    from rl_games.torch_runner import Runner
+
+    env = VectorizedHumanoidEnv(num_envs=4096)
+
+    # Train PPO
+    runner = Runner()
+    runner.load_config({
+        'params': {
+            'algo': {
+                'name': 'a2c_continuous'
+            },
+            'model': {
+                'name': 'continuous_a2c_logstd'
+            },
+            'network': {
+                'name': 'actor_critic',
+                'separate': False,
+                'space': {
+                    'continuous': {
+                        'mu_activation': 'None',
+                        'sigma_activation': 'None',
+                        'mu_init': {
+                            'name': 'default'
+                        },
+                        'sigma_init': {
+                            'name': 'const_initializer',
+                            'val': 0.0
+                        },
+                        'fixed_sigma': True
+                    }
+                },
+                'mlp': {
+                    'units': [256, 128, 64],
+                    'activation': 'elu',
+                    'd2rl': False,
+                    'initializer': {
+                        'name': 'default'
+                    },
+                    'regularizer': {
+                        'name': 'None'
+                    }
+                }
+            },
+            'config': {
+                'name': 'Humanoid',
+                'env_name': 'rlgpu',
+                'multi_gpu': False,
+                'ppo': True,
+                'mixed_precision': False,
+                'normalize_input': True,
+                'normalize_value': True,
+                'num_actors': 4096,
+                'reward_shaper': {
+                    'scale_value': 1.0
+                },
+                'normalize_advantage': True,
+                'gamma': 0.99,
+                'tau': 0.95,
+                'learning_rate': 3e-4,
+                'lr_schedule': 'adaptive',
+                'kl_threshold': 0.016,
+                'score_to_win': 20000,
+                'max_epochs': 10000,
+                'save_best_after': 100,
+                'save_frequency': 50,
+                'print_stats': True,
+                'grad_norm': 1.0,
+                'entropy_coef': 0.0,
+                'truncate_grads': True,
+                'e_clip': 0.2,
+                'horizon_length': 16,
+                'minibatch_size': 32768,
+                'mini_epochs': 8,
+                'critic_coef': 4,
+                'clip_value': True,
+                'seq_len': 4,
+                'bounds_loss_coef': 0.0001
+            }
+        }
+    })
+
+    runner.run({'train': True, 'play': False})
+
+    simulation_app.close()
+```
+
+**Performance**: 4096 environments at 60 FPS = ~245,000 samples/second.
+
+---
+
+## Exercises
+
+### Basic (40%)
+1. **Install** Isaac Sim (Docker or native) and run the "add_cube" standalone example. Screenshot the cube.
+
+2. **Create** a simple USD scene with 3 objects (cube, sphere, cylinder). Set different colors and positions. Save as `my_scene.usd`.
+
+3. **Enable** ROS 2 bridge and publish camera images from Isaac Sim. Subscribe with a Python node and display using OpenCV.
+
+### Intermediate (40%)
+4. **Benchmark** Isaac ROS YOLO vs. standard ROS YOLO (CPU):
+   - Measure FPS on 640x480 images
+   - Measure latency (image capture to detection publish)
+   - Report speedup factor
+
+5. **Implement** domain randomization for object positions:
+   - Spawn 10 objects on a table
+   - Every reset, randomize positions (±20cm)
+   - Train a simple reaching policy (100k steps)
+
+6. **Create** a USD environment with realistic materials:
+   - Wooden table (PBR shader)
+   - Ceramic mug (glossy)
+   - Metal pot (reflective)
+   - Test under different lighting conditions
+
+### Advanced (20%)
+7. **Train** a humanoid walking policy with 2048 parallel environments:
+   - Use Isaac Gym RL framework
+   - Implement domain randomization (physics, actuators)
+   - Train for 5M steps
+   - Achieve >2 m/s average walking speed
+
+8. **Implement** curriculum learning:
+   - Start with flat terrain
+   - Progressively add: slopes, stairs, obstacles
+   - Automatically increase difficulty when success rate >80%
+
+9. **Capstone Integration**:
+   - Create your Week 13 kitchen scene in Isaac Sim (USD format)
+   - Spawn Unitree H1 with camera and gripper
+   - Add graspable objects with physics
+   - Test: Pick up mug 10 times (manual control)
+   - Submit USD file + video
+
+---
+
+## Further Reading
+
+- **Isaac Sim Docs**: https://docs.omniverse.nvidia.com/isaacsim/latest/
+- **Isaac ROS**: https://nvidia-isaac-ros.github.io/
+- **USD**: https://graphics.pixar.com/usd/docs/index.html
+- **PhysX**: https://nvidia-omniverse.github.io/PhysX/physx/5.3.1/
+
+---
+
+## Summary
+
+- **Isaac Sim** provides GPU-accelerated physics (PhysX) and photorealistic rendering (RTX)
+- **USD format** enables hierarchical scene composition with advanced materials
+- **Isaac ROS** offers 10-100x perception speedup via GPU acceleration
+- **ROS 2 bridge** enables standard ROS communication from Isaac Sim
+- **Parallel environments** (1000s) enable sample-efficient RL training
+- **Domain randomization** in Isaac Sim prepares policies for real-world deployment
+- **Performance**: 4096 envs at 60 FPS = 245k samples/sec on RTX 4090
+
+**Next**: [Week 9-10: Isaac Gym RL & Nav2](./week-09)
+
+---
+
+## References
+
+[1] NVIDIA, "Isaac Sim Documentation," https://docs.omniverse.nvidia.com/isaacsim/latest/, 2024.
+
+[2] China Unicom Research Institute, "Applications and Development Prospects of Humanoid Robots," 2025, p. 78.
+
+[3] V. Makoviychuk et al., "Isaac Gym: High Performance GPU-Based Physics Simulation for Robot Learning," *NeurIPS*, 2021.
+
+---
+
+

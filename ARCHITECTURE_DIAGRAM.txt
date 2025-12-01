@@ -1,0 +1,297 @@
+╔════════════════════════════════════════════════════════════════════════════════╗
+║                   CHAT AUTO-SAVE ARCHITECTURE                                  ║
+╚════════════════════════════════════════════════════════════════════════════════╝
+
+┌────────────────────────────────────────────────────────────────────────────────┐
+│                            BROWSER / FRONTEND                                  │
+│  ┌────────────────────────────────────────────────────────────────────────┐   │
+│  │  React Component: RAGChatWidget.tsx                                    │   │
+│  │  ┌──────────────────────────────────────────────────────────────────┐  │   │
+│  │  │ State:                                                           │  │   │
+│  │  │  - messages: Message[]                                           │  │   │
+│  │  │  - input: string                                                 │  │   │
+│  │  │  - conversationId: string | null                 [NEW]           │  │   │
+│  │  │                                                                  │  │   │
+│  │  │ Functions:                                                       │  │   │
+│  │  │  - sendMessage()                                                 │  │   │
+│  │  │      └─ Pass: conversationId, userEmail          [NEW]           │  │   │
+│  │  │      └─ Receive: conversation_id from response   [NEW]           │  │   │
+│  │  │      └─ Store: setConversationId()               [NEW]           │  │   │
+│  │  │  - handleClearChat()                                             │  │   │
+│  │  │      └─ Show: "History saved in database"        [NEW]           │  │   │
+│  │  │      └─ Reset: conversationId = null             [NEW]           │  │   │
+│  │  └──────────────────────────────────────────────────────────────────┘  │   │
+│  └────────────────────────────────────────────────────────────────────────┘   │
+│                                    ↓↑                                          │
+│                            JSON (HTTP POST)                                    │
+│                                    ↓                                           │
+│  ┌────────────────────────────────────────────────────────────────────────┐   │
+│  │  Service: apiService.ts                                               │   │
+│  │  ┌──────────────────────────────────────────────────────────────────┐  │   │
+│  │  │ sendChatMessage(request: ChatRequest)            [MODIFIED]      │  │   │
+│  │  │  ├─ Input: {                                                     │  │   │
+│  │  │  │   message: string                                             │  │   │
+│  │  │  │   conversationId?: string                      [NEW]           │  │   │
+│  │  │  │   userEmail?: string                           [NEW]           │  │   │
+│  │  │  │   ...                                                         │  │   │
+│  │  │  │ }                                                             │  │   │
+│  │  │  └─ Output: ChatResponse {                        [MODIFIED]     │  │   │
+│  │  │    answer: string                                                │  │   │
+│  │  │    citations: Citation[]                                         │  │   │
+│  │  │    conversation_id: string                        [NEW]           │  │   │
+│  │  │  }                                                               │  │   │
+│  │  └──────────────────────────────────────────────────────────────────┘  │   │
+│  └────────────────────────────────────────────────────────────────────────┘   │
+└────────────────────────────────────────────────────────────────────────────────┘
+                                    ↓
+                        POST /api/chat (HTTP)
+                                    ↓
+┌────────────────────────────────────────────────────────────────────────────────┐
+│                             BACKEND / API                                      │
+│  ┌────────────────────────────────────────────────────────────────────────┐   │
+│  │  Router: chat.py                                                      │   │
+│  │  ┌──────────────────────────────────────────────────────────────────┐  │   │
+│  │  │ @router.post("/")                                                │  │   │
+│  │  │ async def chat(request: ChatRequest):             [MODIFIED]     │  │   │
+│  │  │                                                                  │  │   │
+│  │  │ 1. conversation_id = request.conversation_id                     │  │   │
+│  │  │                or generate_uuid()                 [NEW]           │  │   │
+│  │  │                                                                  │  │   │
+│  │  │ 2. result = await rag_service.ask(...)                           │  │   │
+│  │  │                                                                  │  │   │
+│  │  │ 3. await _save_message_to_conversation(          [NEW BLOCK]     │  │   │
+│  │  │       conversation_id,                                           │  │   │
+│  │  │       role="user",                                               │  │   │
+│  │  │       content=request.message,                                   │  │   │
+│  │  │       user_email=request.user_email)                             │  │   │
+│  │  │                                                                  │  │   │
+│  │  │ 4. await _save_message_to_conversation(          [NEW BLOCK]     │  │   │
+│  │  │       conversation_id,                                           │  │   │
+│  │  │       role="assistant",                                          │  │   │
+│  │  │       content=result['answer'],                                  │  │   │
+│  │  │       citations=...,                                             │  │   │
+│  │  │       user_email=request.user_email)                             │  │   │
+│  │  │                                                                  │  │   │
+│  │  │ 5. return ChatResponse(                           [MODIFIED]     │  │   │
+│  │  │       answer=...,                                                │  │   │
+│  │  │       citations=...,                                             │  │   │
+│  │  │       conversation_id=conversation_id)            [NEW]          │  │   │
+│  │  └──────────────────────────────────────────────────────────────────┘  │   │
+│  └────────────────────────────────────────────────────────────────────────┘   │
+│                                    ↓                                           │
+│  ┌────────────────────────────────────────────────────────────────────────┐   │
+│  │  Helper Function: _save_message_to_conversation()     [NEW]            │   │
+│  │  ┌──────────────────────────────────────────────────────────────────┐  │   │
+│  │  │ Inputs:                                                          │  │   │
+│  │  │  - conversation_id: str                                          │  │   │
+│  │  │  - role: "user" | "assistant"                                    │  │   │
+│  │  │  - content: str                                                  │  │   │
+│  │  │  - citations?: List[Citation]                                    │  │   │
+│  │  │  - user_email?: str                                              │  │   │
+│  │  │                                                                  │  │   │
+│  │  │ Operations:                                                      │  │   │
+│  │  │  1. Get shared CONVERSATIONS and MESSAGES dicts                   │  │   │
+│  │  │  2. If conversation doesn't exist, create it                     │  │   │
+│  │  │  3. Create message_data with UUID                                │  │   │
+│  │  │  4. Append message to MESSAGES[conversation_id]                  │  │   │
+│  │  │  5. Update CONVERSATIONS metadata                                │  │   │
+│  │  │  6. Return message_data                                          │  │   │
+│  │  └──────────────────────────────────────────────────────────────────┘  │   │
+│  └────────────────────────────────────────────────────────────────────────┘   │
+│                                    ↓                                           │
+│  ┌────────────────────────────────────────────────────────────────────────┐   │
+│  │  Shared Storage: storage.py                           [NEW]            │   │
+│  │  ┌──────────────────────────────────────────────────────────────────┐  │   │
+│  │  │ CONVERSATIONS = {                                                │  │   │
+│  │  │   "conv-id-1": {                                                 │  │   │
+│  │  │     "conversation_id": "conv-id-1",                              │  │   │
+│  │  │     "user_email": "user@example.com",                            │  │   │
+│  │  │     "title": "New Conversation",                                 │  │   │
+│  │  │     "message_count": 2,                                          │  │   │
+│  │  │     "created_at": "2024-12-01T...",                              │  │   │
+│  │  │     "updated_at": "2024-12-01T..."                               │  │   │
+│  │  │   }                                                              │  │   │
+│  │  │ }                                                                │  │   │
+│  │  │                                                                  │  │   │
+│  │  │ MESSAGES = {                                                     │  │   │
+│  │  │   "conv-id-1": [                                                 │  │   │
+│  │  │     {                                                            │  │   │
+│  │  │       "id": "msg-1",                                             │  │   │
+│  │  │       "role": "user",                                            │  │   │
+│  │  │       "content": "What is ZMP?",                                 │  │   │
+│  │  │       "timestamp": "2024-12-01T10:00:00",                        │  │   │
+│  │  │       "citations": []                                            │  │   │
+│  │  │     },                                                           │  │   │
+│  │  │     {                                                            │  │   │
+│  │  │       "id": "msg-2",                                             │  │   │
+│  │  │       "role": "assistant",                                       │  │   │
+│  │  │       "content": "ZMP is...",                                    │  │   │
+│  │  │       "timestamp": "2024-12-01T10:00:05",                        │  │   │
+│  │  │       "citations": [{"chapter": "Week 11", "url": "..."}]       │  │   │
+│  │  │     }                                                            │  │   │
+│  │  │   ]                                                              │  │   │
+│  │  │ }                                                                │  │   │
+│  │  │                                                                  │  │   │
+│  │  │ Functions:                                                       │  │   │
+│  │  │  - get_conversations() → returns CONVERSATIONS dict              │  │   │
+│  │  │  - get_messages() → returns MESSAGES dict                        │  │   │
+│  │  └──────────────────────────────────────────────────────────────────┘  │   │
+│  └────────────────────────────────────────────────────────────────────────┘   │
+│                                    ↓                                           │
+│  ┌────────────────────────────────────────────────────────────────────────┐   │
+│  │  Router: conversations.py                             [MODIFIED]       │   │
+│  │  ┌──────────────────────────────────────────────────────────────────┐  │   │
+│  │  │ GET /api/conversations/{conversation_id}                         │  │   │
+│  │  │  └─ Returns: Conversation + all Messages                         │  │   │
+│  │  │                                                                  │  │   │
+│  │  │ GET /api/conversations/user/{email}                              │  │   │
+│  │  │  └─ Returns: All Conversations for user                          │  │   │
+│  │  │                                                                  │  │   │
+│  │  │ POST /api/conversations/                                         │  │   │
+│  │  │  └─ Create: New Conversation                                     │  │   │
+│  │  │                                                                  │  │   │
+│  │  │ DELETE /api/conversations/{conversation_id}                      │  │   │
+│  │  │  └─ Delete: Conversation + all Messages                          │  │   │
+│  │  │                                                                  │  │   │
+│  │  │ All endpoints now use shared storage:                            │  │   │
+│  │  │  CONVERSATIONS = get_conversations()                [MODIFIED]   │  │   │
+│  │  │  MESSAGES = get_messages()                         [MODIFIED]   │  │   │
+│  │  └──────────────────────────────────────────────────────────────────┘  │   │
+│  └────────────────────────────────────────────────────────────────────────┘   │
+└────────────────────────────────────────────────────────────────────────────────┘
+                                    ↑
+                        GET /api/conversations/{id}
+                        (Frontend can retrieve history)
+
+
+╔════════════════════════════════════════════════════════════════════════════════╗
+║                          MESSAGE SAVE SEQUENCE                                 ║
+╚════════════════════════════════════════════════════════════════════════════════╝
+
+1. USER SENDS MESSAGE
+   ┌──────────────────────────┐
+   │ "What is ZMP?"           │
+   │ conversationId = null    │
+   └──────────────────────────┘
+
+2. FRONTEND SENDS REQUEST
+   ┌──────────────────────────────────────┐
+   │ POST /api/chat                       │
+   │ {                                    │
+   │   message: "What is ZMP?",           │
+   │   conversation_id: null,             │
+   │   user_email: "user@ex.com"          │
+   │ }                                    │
+   └──────────────────────────────────────┘
+
+3. BACKEND PROCESSES
+   ┌──────────────────────────────────────┐
+   │ 1. Generate UUID: "abc-123"          │
+   │ 2. Run RAG pipeline                  │
+   │ 3. Get response: "ZMP is..."         │
+   │ 4. Get citations: [...]              │
+   └──────────────────────────────────────┘
+
+4. BACKEND AUTO-SAVES USER MESSAGE ✅
+   ┌──────────────────────────────────────┐
+   │ _save_message_to_conversation(       │
+   │   "abc-123",                         │
+   │   "user",                            │
+   │   "What is ZMP?",                    │
+   │   user_email="user@ex.com"           │
+   │ )                                    │
+   └──────────────────────────────────────┘
+                  ↓
+   Appends to MESSAGES["abc-123"]
+
+5. BACKEND AUTO-SAVES ASSISTANT MESSAGE ✅
+   ┌──────────────────────────────────────┐
+   │ _save_message_to_conversation(       │
+   │   "abc-123",                         │
+   │   "assistant",                       │
+   │   "ZMP is...",                       │
+   │   citations=[...],                   │
+   │   user_email="user@ex.com"           │
+   │ )                                    │
+   └──────────────────────────────────────┘
+                  ↓
+   Appends to MESSAGES["abc-123"]
+
+6. BACKEND RETURNS RESPONSE
+   ┌──────────────────────────────────────┐
+   │ {                                    │
+   │   answer: "ZMP is...",               │
+   │   citations: [...],                  │
+   │   conversation_id: "abc-123"  ← NEW  │
+   │ }                                    │
+   └──────────────────────────────────────┘
+
+7. FRONTEND RECEIVES RESPONSE
+   ┌──────────────────────────────────────┐
+   │ data.conversation_id = "abc-123"     │
+   │ setConversationId("abc-123")         │
+   │ Display response in UI                │
+   └──────────────────────────────────────┘
+
+8. NEXT MESSAGE USES SAME ID
+   ┌──────────────────────────────────────┐
+   │ Message 1: "What is ZMP?"            │
+   │ Message 2: "Tell me more?"           │
+   │                                      │
+   │ Both under: "abc-123"                │
+   │ Grouped in same conversation         │
+   └──────────────────────────────────────┘
+
+
+╔════════════════════════════════════════════════════════════════════════════════╗
+║                          CLEAR CHAT BEHAVIOR                                   ║
+╚════════════════════════════════════════════════════════════════════════════════╝
+
+BEFORE CLEAR
+┌──────────────────────────────────────┐
+│  Frontend UI:                        │
+│  ┌────────────────────────────────┐  │
+│  │ You: What is ZMP?              │  │
+│  │ Assistant: ZMP is...           │  │
+│  └────────────────────────────────┘  │
+│                                      │
+│  Backend Database:                   │
+│  CONVERSATIONS["abc-123"]            │
+│  MESSAGES["abc-123"][msg1, msg2]     │
+└──────────────────────────────────────┘
+
+USER CLICKS CLEAR
+┌──────────────────────────────────────┐
+│ handleClearChat()                    │
+│  ├─ setMessages([])                  │
+│  └─ setConversationId(null)          │
+└──────────────────────────────────────┘
+
+AFTER CLEAR
+┌──────────────────────────────────────┐
+│  Frontend UI:                        │
+│  ┌────────────────────────────────┐  │
+│  │ (empty)                        │  │
+│  │ conversationId = null          │  │
+│  └────────────────────────────────┘  │
+│                                      │
+│  Backend Database:                   │
+│  CONVERSATIONS["abc-123"] ← STILL THERE ✅
+│  MESSAGES["abc-123"][msg1, msg2]    ← STILL THERE ✅
+│                                      │
+│  Can retrieve via API:               │
+│  GET /api/conversations/abc-123      │
+└──────────────────────────────────────┘
+
+NEXT MESSAGE CREATES NEW CONVERSATION
+┌──────────────────────────────────────┐
+│ User sends: "Different topic"        │
+│ conversationId = null (reset)        │
+│                                      │
+│ Backend generates: "xyz-789"         │
+│ Old conversation still intact!       │
+│                                      │
+│ Now we have:                         │
+│ - "abc-123" → old messages           │
+│ - "xyz-789" → new messages           │
+└──────────────────────────────────────┘

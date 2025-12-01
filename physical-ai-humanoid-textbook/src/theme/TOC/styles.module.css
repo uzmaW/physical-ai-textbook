@@ -1,0 +1,23 @@
+.tableOfContents {
+  max-height: 100vh;
+  overflow-y: auto;
+  position: sticky;
+  top: 0;
+  display: block !important;
+}
+
+@media (min-width: 997px) {
+  .tableOfContents {
+    display: block !important;
+  }
+}
+
+@media (max-width: 996px) {
+  .tableOfContents {
+    display: none;
+  }
+
+  .docItemContainer {
+    padding: 0 0.3rem;
+  }
+}

@@ -1,0 +1,335 @@
+/**
+ * Table of Contents Styles for Docusaurus Book
+ */
+
+.tableOfContents {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  font-size: 0.9rem;
+}
+
+/* Header */
+.tocHeader {
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+[data-theme='dark'] .tocHeader {
+  border-bottom-color: #334155;
+}
+
+.tocTitle {
+  margin: 0 0 1rem 0;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+[data-theme='dark'] .tocTitle {
+  color: #f1f5f9;
+}
+
+/* Progress Section */
+.progressSection {
+  margin-top: 1rem;
+}
+
+.progressInfo {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.progressText {
+  font-size: 0.8rem;
+  color: #64748b;
+  font-weight: 500;
+}
+
+[data-theme='dark'] .progressText {
+  color: #94a3b8;
+}
+
+.progressPercent {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #10b981;
+}
+
+.progressBar {
+  height: 6px;
+  background: #e2e8f0;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+[data-theme='dark'] .progressBar {
+  background: #334155;
+}
+
+.progressFill {
+  height: 100%;
+  background: linear-gradient(90deg, #10b981, #059669);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+/* Navigation */
+.tocNav {
+  flex: 1;
+  overflow-y: auto;
+  padding-right: 0.5rem;
+}
+
+/* TOC Items */
+.tocItem {
+  margin-bottom: 0.25rem;
+}
+
+.tocItemContent {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+  position: relative;
+}
+
+.tocItemContent:hover {
+  background: #f1f5f9;
+}
+
+[data-theme='dark'] .tocItemContent:hover {
+  background: #334155;
+}
+
+.tocItemContent.currentPage {
+  background: #dbeafe;
+  border-left: 3px solid #3b82f6;
+  font-weight: 600;
+}
+
+[data-theme='dark'] .tocItemContent.currentPage {
+  background: #1e3a8a;
+  color: #dbeafe;
+}
+
+.tocItemContent.completed {
+  opacity: 0.8;
+}
+
+.tocItemContent.section {
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: #374151;
+  margin-top: 0.5rem;
+}
+
+[data-theme='dark'] .tocItemContent.section {
+  color: #d1d5db;
+}
+
+.tocItemContent.lab {
+  background: #fef3c7;
+  border-left: 2px solid #f59e0b;
+}
+
+[data-theme='dark'] .tocItemContent.lab {
+  background: #451a03;
+  border-left-color: #d97706;
+}
+
+/* Expand Button */
+.expandButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: none;
+  color: #64748b;
+  cursor: pointer;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.expandButton:hover {
+  background: #e2e8f0;
+  color: #374151;
+}
+
+[data-theme='dark'] .expandButton {
+  color: #94a3b8;
+}
+
+[data-theme='dark'] .expandButton:hover {
+  background: #475569;
+  color: #f1f5f9;
+}
+
+/* Item Icon */
+.itemIcon {
+  display: flex;
+  align-items: center;
+  color: #64748b;
+  flex-shrink: 0;
+}
+
+[data-theme='dark'] .itemIcon {
+  color: #94a3b8;
+}
+
+.tocItemContent.section .itemIcon {
+  color: #3b82f6;
+}
+
+.tocItemContent.lab .itemIcon {
+  color: #f59e0b;
+}
+
+/* Item Link/Title */
+.itemLink,
+.itemTitle {
+  flex: 1;
+  text-decoration: none;
+  color: inherit;
+  line-height: 1.4;
+  font-size: inherit;
+}
+
+.itemLink:hover {
+  text-decoration: none;
+  color: #3b82f6;
+}
+
+[data-theme='dark'] .itemLink:hover {
+  color: #60a5fa;
+}
+
+/* Completion Button */
+.completionButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  border-radius: 50%;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.tocItemContent:hover .completionButton {
+  opacity: 1;
+}
+
+.completedIcon {
+  color: #10b981;
+}
+
+.incompleteIcon {
+  color: #d1d5db;
+}
+
+[data-theme='dark'] .incompleteIcon {
+  color: #6b7280;
+}
+
+.completionButton:hover {
+  background: #f3f4f6;
+  transform: scale(1.1);
+}
+
+[data-theme='dark'] .completionButton:hover {
+  background: #374151;
+}
+
+/* Children */
+.tocChildren {
+  margin-left: 0.5rem;
+  border-left: 1px solid #e2e8f0;
+  padding-left: 0.5rem;
+}
+
+[data-theme='dark'] .tocChildren {
+  border-left-color: #334155;
+}
+
+/* Footer */
+.tocFooter {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #e2e8f0;
+  display: flex;
+  gap: 0.5rem;
+}
+
+[data-theme='dark'] .tocFooter {
+  border-top-color: #334155;
+}
+
+.actionButton {
+  flex: 1;
+  padding: 0.5rem;
+  font-size: 0.75rem;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  color: #64748b;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.actionButton:hover {
+  background: #e2e8f0;
+  color: #374151;
+}
+
+[data-theme='dark'] .actionButton {
+  background: #1e293b;
+  border-color: #334155;
+  color: #94a3b8;
+}
+
+[data-theme='dark'] .actionButton:hover {
+  background: #334155;
+  color: #f1f5f9;
+}
+
+/* Responsive Design */
+@media (max-width: 996px) {
+  .tocNav {
+    max-height: 300px;
+  }
+  
+  .tocItemContent {
+    padding: 0.75rem;
+    font-size: 0.9rem;
+  }
+}
+
+/* Custom Scrollbar */
+.tocNav::-webkit-scrollbar {
+  width: 4px;
+}
+
+.tocNav::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.tocNav::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.5);
+  border-radius: 2px;
+}
+
+.tocNav::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.8);
+}

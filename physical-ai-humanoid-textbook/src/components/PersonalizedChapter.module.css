@@ -1,0 +1,175 @@
+/**
+ * PersonalizedChapter Styles - Matching Chat UI Design
+ */
+
+.personalizedChapter {
+  width: 100%;
+}
+
+/* Chapter Header - Matching Chat UI Style */
+.chapterHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem;
+  background: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+  margin-bottom: 1.5rem;
+  border-radius: 0;
+  box-shadow: none;
+  border-left: none;
+}
+
+[data-theme='dark'] .chapterHeader {
+  background: #111827;
+  border-bottom-color: #374151;
+}
+
+/* Difficulty Badge */
+.difficultyBadge {
+  padding: 0.25rem 0.75rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.beginner {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+[data-theme='dark'] .beginner {
+  background: #064e3b;
+  color: #6ee7b7;
+}
+
+.intermediate {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+[data-theme='dark'] .intermediate {
+  background: #451a03;
+  color: #fcd34d;
+}
+
+.advanced {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+[data-theme='dark'] .advanced {
+  background: #7f1d1d;
+  color: #fca5a5;
+}
+
+/* Control Buttons - Matching Chat UI */
+.controlButtons {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.controlButton {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: #6b7280;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+[data-theme='dark'] .controlButton {
+  color: #9ca3af;
+}
+
+.controlButton:hover:not(:disabled) {
+  background: #e5e7eb;
+  color: #374151;
+}
+
+[data-theme='dark'] .controlButton:hover:not(:disabled) {
+  background: #374151;
+  color: #f3f4f6;
+}
+
+.controlButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.personalizeButton {
+  background: #dbeafe;
+  color: #3b82f6;
+}
+
+[data-theme='dark'] .personalizeButton {
+  background: #1e3a8a;
+  color: #93c5fd;
+}
+
+.personalizeButton:hover:not(:disabled) {
+  background: #bfdbfe;
+  color: #2563eb;
+}
+
+[data-theme='dark'] .personalizeButton:hover:not(:disabled) {
+  background: #1e40af;
+  color: #dbeafe;
+}
+
+.translateButton {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+[data-theme='dark'] .translateButton {
+  background: #064e3b;
+  color: #6ee7b7;
+}
+
+.translateButton:hover:not(:disabled) {
+  background: #a7f3d0;
+  color: #047857;
+}
+
+[data-theme='dark'] .translateButton:hover:not(:disabled) {
+  background: #047857;
+  color: #d1fae5;
+}
+
+/* Chapter Content */
+.chapterContent {
+  width: 100%;
+}
+
+.urduContent {
+  font-family: 'Noto Nastaliq Urdu', serif;
+  font-size: 1.25em;
+  line-height: 2;
+  direction: rtl;
+  text-align: right;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .chapterHeader {
+    flex-direction: column;
+    gap: 0.75rem;
+    align-items: stretch;
+  }
+
+  .controlButtons {
+    width: 100%;
+  }
+
+  .controlButton {
+    flex: 1;
+    justify-content: center;
+  }
+}

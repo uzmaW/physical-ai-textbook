@@ -1,0 +1,789 @@
+---
+id: week-11
+title: Humanoid Kinematics & Bipedal Locomotion
+sidebar_label: Humanoid Kinematics & Locomotion
+sidebar_position: 11
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Week 11: Humanoid Kinematics & Bipedal Locomotion
+
+## Learning Outcomes
+
+By the end of this module, you will be able to:
+
+1. **Derive** forward and inverse kinematics for humanoid robots
+2. **Implement** ZMP-based bipedal walking controllers
+3. **Design** whole-body controllers using quadratic programming
+4. **Generate** stable gaits with trajectory optimization
+5. **Apply** capture point theory for push recovery
+6. **Integrate** locomotion with manipulation tasks
+
+---
+
+## 11.1 Humanoid Kinematics
+
+### Degrees of Freedom (DOF)
+
+**Typical Humanoid** [1]:
+- **Legs**: 6 DOF × 2 = 12 (hip 3, knee 1, ankle 2 per leg)
+- **Arms**: 7 DOF × 2 = 14 (shoulder 3, elbow 1, wrist 3 per arm)
+- **Torso**: 3 DOF (roll, pitch, yaw)
+- **Head**: 2 DOF (pan, tilt)
+- **Hands**: 12+ DOF per hand (underactuated)
+
+**Total**: 30-50 DOF (excluding hands)
+
+> **ACM Survey (2025)**: "Human-level dexterity requires 20+ DOF hands, but most humanoids use 1-2 DOF grippers due to complexity and cost. Full dexterous hands remain an active research area." [2, p. 35]
+
+### Forward Kinematics
+
+**Problem**: Given joint angles $\mathbf{q}$, find end-effector pose $\mathbf{x}$.
+
+**Method**: Denavit-Hartenberg (DH) parameters.
+
+```python
+#!/usr/bin/env python3
+"""
+Forward kinematics using Denavit-Hartenberg convention.
+
+Reference: Siciliano et al., "Robotics: Modelling, Planning and Control," 2009
+"""
+
+import numpy as np
+
+
+def dh_transform(a, alpha, d, theta):
+    """
+    Compute transformation matrix from DH parameters.
+
+    Args:
+        a: Link length
+        alpha: Link twist
+        d: Link offset
+        theta: Joint angle
+
+    Returns:
+        4x4 homogeneous transformation matrix
+    """
+    ct = np.cos(theta)
+    st = np.sin(theta)
+    ca = np.cos(alpha)
+    sa = np.sin(alpha)
+
+    T = np.array([
+        [ct,    -st*ca,   st*sa,   a*ct],
+        [st,     ct*ca,  -ct*sa,   a*st],
+        [0,        sa,      ca,       d],
+        [0,         0,       0,       1]
+    ])
+
+    return T
+
+
+def forward_kinematics(joint_angles, dh_params):
+    """
+    Compute end-effector pose from joint angles.
+
+    Args:
+        joint_angles: Array of n joint angles (radians)
+        dh_params: Array of (a, alpha, d) for each link (n x 3)
+
+    Returns:
+        4x4 transformation matrix (base to end-effector)
+    """
+    T = np.eye(4)
+
+    for i, theta in enumerate(joint_angles):
+        a, alpha, d = dh_params[i]
+
+        # Compute i-th transformation
+        T_i = dh_transform(a, alpha, d, theta)
+
+        # Multiply transformations
+        T = T @ T_i
+
+    return T
+
+
+# Example: 3-DOF planar arm
+if __name__ == "__main__":
+    # DH parameters for 3-link arm
+    # Format: [a (link length), alpha (twist), d (offset)]
+    dh_params = np.array([
+        [0.3, 0, 0],    # Link 1: 30cm
+        [0.3, 0, 0],    # Link 2: 30cm
+        [0.2, 0, 0]     # Link 3: 20cm
+    ])
+
+    # Joint angles
+    q = np.array([np.pi/4, np.pi/6, -np.pi/3])
+
+    # Compute FK
+    T = forward_kinematics(q, dh_params)
+
+    print("End-effector transformation:")
+    print(T)
+    print(f"\nEnd-effector position: ({T[0,3]:.3f}, {T[1,3]:.3f}, {T[2,3]:.3f})")
+```
+
+---
+
+## 11.2 Inverse Kinematics
+
+### Analytical IK (Closed-Form)
+
+For specific geometries (e.g., 6-DOF arm), derive closed-form solution.
+
+**Example**: 2-link planar arm
+
+```python
+def ik_2link_planar(x, y, L1=0.3, L2=0.3):
+    """
+    Analytical IK for 2-link planar arm.
+
+    Args:
+        x, y: Target end-effector position
+        L1, L2: Link lengths
+
+    Returns:
+        (theta1, theta2): Joint angles, or None if unreachable
+    """
+    # Distance to target
+    d = np.sqrt(x**2 + y**2)
+
+    # Check reachability
+    if d > (L1 + L2) or d < abs(L1 - L2):
+        return None  # Unreachable
+
+    # Law of cosines for theta2
+    cos_theta2 = (d**2 - L1**2 - L2**2) / (2 * L1 * L2)
+    theta2 = np.arccos(cos_theta2)  # Elbow-up solution
+
+    # Theta1
+    beta = np.arctan2(y, x)
+    alpha = np.arctan2(L2 * np.sin(theta2), L1 + L2 * np.cos(theta2))
+    theta1 = beta - alpha
+
+    return (theta1, theta2)
+
+
+# Test
+if __name__ == "__main__":
+    x, y = 0.4, 0.3
+    result = ik_2link_planar(x, y)
+
+    if result:
+        theta1, theta2 = result
+        print(f"IK solution for ({x}, {y}):")
+        print(f"  theta1 = {np.degrees(theta1):.2f}°")
+        print(f"  theta2 = {np.degrees(theta2):.2f}°")
+
+        # Verify with FK
+        fk_x = 0.3 * np.cos(theta1) + 0.3 * np.cos(theta1 + theta2)
+        fk_y = 0.3 * np.sin(theta1) + 0.3 * np.sin(theta1 + theta2)
+        print(f"FK verification: ({fk_x:.3f}, {fk_y:.3f})")
+    else:
+        print(f"Target ({x}, {y}) is unreachable")
+```
+
+### Numerical IK (Jacobian-Based)
+
+For redundant manipulators (7+ DOF), use iterative methods:
+
+```python
+def ik_jacobian(target_pose, q_init, max_iterations=100, tolerance=0.01):
+    """
+    Numerical IK using Jacobian pseudo-inverse.
+
+    Args:
+        target_pose: Desired [x, y, z, roll, pitch, yaw]
+        q_init: Initial joint angles
+        max_iterations: Max iterations
+        tolerance: Position error threshold (meters)
+
+    Returns:
+        Joint angles achieving target_pose, or None if failed
+    """
+    q = q_init.copy()
+
+    for iteration in range(max_iterations):
+        # Compute current end-effector pose
+        T = forward_kinematics(q, dh_params)
+        current_pos = T[:3, 3]
+        current_ori = rotation_matrix_to_euler(T[:3, :3])
+
+        # Compute error
+        pos_error = target_pose[:3] - current_pos
+        ori_error = target_pose[3:] - current_ori
+        error = np.concatenate([pos_error, ori_error])
+
+        # Check convergence
+        if np.linalg.norm(pos_error) < tolerance:
+            return q
+
+        # Compute Jacobian
+        J = compute_jacobian(q, dh_params)
+
+        # Pseudo-inverse
+        J_pinv = np.linalg.pinv(J)
+
+        # Update joint angles
+        dq = J_pinv @ error
+        q += 0.1 * dq  # Step size
+
+    return None  # Failed to converge
+
+
+def compute_jacobian(q, dh_params):
+    """
+    Compute Jacobian matrix: J = dX/dq.
+
+    Dimensions: (6, n) where n = number of joints
+    """
+    n = len(q)
+    J = np.zeros((6, n))
+
+    # Compute FK for each joint
+    T = np.eye(4)
+    transforms = [T]
+
+    for i in range(n):
+        a, alpha, d = dh_params[i]
+        T_i = dh_transform(a, alpha, d, q[i])
+        T = T @ T_i
+        transforms.append(T)
+
+    # End-effector position
+    p_n = transforms[-1][:3, 3]
+
+    # Jacobian columns
+    for i in range(n):
+        # Position of joint i
+        p_i = transforms[i][:3, 3]
+
+        # Joint axis (z-axis of frame i)
+        z_i = transforms[i][:3, 2]
+
+        # Linear velocity contribution
+        J[:3, i] = np.cross(z_i, p_n - p_i)
+
+        # Angular velocity contribution
+        J[3:, i] = z_i
+
+    return J
+```
+
+---
+
+## 11.3 Bipedal Locomotion
+
+### Zero-Moment Point (ZMP)
+
+**ZMP**: Point on the ground where net moment of ground reaction forces is zero [3].
+
+**Stability Criterion**: ZMP inside support polygon (foot contact area) → robot is stable.
+
+```python
+def compute_zmp(com_position, com_acceleration, height):
+    """
+    Compute ZMP position (simplified 2D).
+
+    Reference: Vukobratović & Borovac, "Zero-Moment Point - Thirty Five Years," 2004
+
+    Args:
+        com_position: [x, y] of center of mass
+        com_acceleration: [ax, ay] of CoM
+        height: CoM height above ground
+
+    Returns:
+        [zmp_x, zmp_y]: ZMP position
+    """
+    g = 9.81  # Gravity
+
+    zmp_x = com_position[0] - (height / g) * com_acceleration[0]
+    zmp_y = com_position[1] - (height / g) * com_acceleration[1]
+
+    return np.array([zmp_x, zmp_y])
+
+
+def check_stability(zmp, support_polygon):
+    """
+    Check if ZMP is inside support polygon.
+
+    Args:
+        zmp: [x, y] position
+        support_polygon: List of vertices [(x1, y1), (x2, y2), ...]
+
+    Returns:
+        True if stable, False otherwise
+    """
+    from shapely.geometry import Point, Polygon
+
+    point = Point(zmp)
+    polygon = Polygon(support_polygon)
+
+    return polygon.contains(point)
+
+
+# Example
+if __name__ == "__main__":
+    # CoM state
+    com_pos = [0.0, 0.0]
+    com_acc = [0.5, 0.0]  # Accelerating forward
+    height = 1.0  # meters
+
+    zmp = compute_zmp(com_pos, com_acc, height)
+    print(f"ZMP: ({zmp[0]:.3f}, {zmp[1]:.3f})")
+
+    # Support polygon (single foot: 20cm x 10cm)
+    foot_polygon = [
+        (-0.1, -0.05),
+        (0.1, -0.05),
+        (0.1, 0.05),
+        (-0.1, 0.05)
+    ]
+
+    is_stable = check_stability(zmp, foot_polygon)
+    print(f"Stable: {is_stable}")
+```
+
+---
+
+## 11.4 Gait Generation
+
+### Walking Pattern Generator
+
+```python
+#!/usr/bin/env python3
+"""
+Simple walking pattern generator using ZMP preview control.
+
+Reference: Kajita et al., "Biped Walking Pattern Generation by using Preview
+           Control of Zero-Moment Point," ICRA 2003
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+class WalkingPatternGenerator:
+    """Generate ZMP-based walking trajectories."""
+
+    def __init__(self, com_height=1.0, step_length=0.3, step_duration=1.0):
+        self.com_height = com_height
+        self.step_length = step_length
+        self.step_duration = step_duration
+        self.dt = 0.01  # 100 Hz
+        self.g = 9.81
+
+    def generate_zmp_trajectory(self, num_steps=4):
+        """
+        Generate ZMP reference trajectory for walking.
+
+        Args:
+            num_steps: Number of steps to take
+
+        Returns:
+            Array of ZMP positions over time
+        """
+        steps_per_phase = int(self.step_duration / self.dt)
+        total_time = num_steps * steps_per_phase
+
+        zmp_ref = np.zeros((total_time, 2))
+
+        for step in range(num_steps):
+            start_idx = step * steps_per_phase
+            end_idx = (step + 1) * steps_per_phase
+
+            # Alternate feet
+            if step % 2 == 0:
+                # Left foot support
+                zmp_ref[start_idx:end_idx, 0] = step * self.step_length / 2
+                zmp_ref[start_idx:end_idx, 1] = 0.1  # Left foot (y = 0.1m)
+            else:
+                # Right foot support
+                zmp_ref[start_idx:end_idx, 0] = step * self.step_length / 2
+                zmp_ref[start_idx:end_idx, 1] = -0.1  # Right foot (y = -0.1m)
+
+        return zmp_ref
+
+    def generate_com_trajectory(self, zmp_ref):
+        """
+        Generate CoM trajectory that tracks ZMP reference.
+
+        Uses simplified inverted pendulum model.
+
+        Args:
+            zmp_ref: ZMP reference trajectory
+
+        Returns:
+            CoM position, velocity, acceleration trajectories
+        """
+        n = len(zmp_ref)
+
+        com_pos = np.zeros((n, 2))
+        com_vel = np.zeros((n, 2))
+        com_acc = np.zeros((n, 2))
+
+        # Initial state: stationary at origin
+        com_pos[0] = [0.0, 0.0]
+        com_vel[0] = [0.0, 0.0]
+
+        # Inverted pendulum dynamics
+        omega = np.sqrt(self.g / self.com_height)
+
+        for t in range(1, n):
+            # Simplified preview control (feedforward)
+            # In practice, use MPC or full preview control
+
+            # Target ZMP
+            zmp_target = zmp_ref[t]
+
+            # Compute required acceleration
+            com_acc[t] = omega**2 * (com_pos[t-1] - zmp_target)
+
+            # Integrate (Euler method)
+            com_vel[t] = com_vel[t-1] + com_acc[t] * self.dt
+            com_pos[t] = com_pos[t-1] + com_vel[t] * self.dt
+
+        return com_pos, com_vel, com_acc
+
+    def plot_trajectories(self, zmp_ref, com_pos):
+        """Visualize ZMP and CoM trajectories."""
+        time = np.arange(len(zmp_ref)) * self.dt
+
+        fig, axes = plt.subplots(2, 1, figsize=(10, 8))
+
+        # X-direction
+        axes[0].plot(time, zmp_ref[:, 0], 'r--', label='ZMP Reference')
+        axes[0].plot(time, com_pos[:, 0], 'b-', label='CoM Actual')
+        axes[0].set_ylabel('X Position (m)')
+        axes[0].legend()
+        axes[0].grid(True)
+
+        # Y-direction
+        axes[1].plot(time, zmp_ref[:, 1], 'r--', label='ZMP Reference')
+        axes[1].plot(time, com_pos[:, 1], 'b-', label='CoM Actual')
+        axes[1].set_xlabel('Time (s)')
+        axes[1].set_ylabel('Y Position (m)')
+        axes[1].legend()
+        axes[1].grid(True)
+
+        plt.tight_layout()
+        plt.savefig('walking_pattern.png')
+        print("Plot saved: walking_pattern.png")
+
+
+# Generate walking pattern
+if __name__ == "__main__":
+    wpg = WalkingPatternGenerator(
+        com_height=1.0,
+        step_length=0.4,
+        step_duration=0.8
+    )
+
+    # Generate 4-step walk
+    zmp_ref = wpg.generate_zmp_trajectory(num_steps=4)
+    com_pos, com_vel, com_acc = wpg.generate_com_trajectory(zmp_ref)
+
+    # Visualize
+    wpg.plot_trajectories(zmp_ref, com_pos)
+
+    print(f"Generated {len(zmp_ref)} trajectory points ({len(zmp_ref) * 0.01:.2f} seconds)")
+```
+
+---
+
+## 11.5 Capture Point Theory
+
+### Definition
+
+**Capture Point (CP)**: A point on the ground where the robot can step to come to a complete stop [4].
+
+$$
+\mathbf{r}_{cp} = \mathbf{r}_{com} + \frac{1}{\omega} \dot{\mathbf{r}}_{com}
+$$
+
+where $\omega = \sqrt{g/h}$ (inverted pendulum natural frequency).
+
+**Applications**:
+- Push recovery: Step to capture point
+- Footstep planning: Ensure CP is within support polygon
+
+```python
+def compute_capture_point(com_pos, com_vel, com_height):
+    """
+    Compute capture point.
+
+    Args:
+        com_pos: [x, y] CoM position
+        com_vel: [vx, vy] CoM velocity
+        com_height: Height above ground
+
+    Returns:
+        [cp_x, cp_y]: Capture point position
+    """
+    g = 9.81
+    omega = np.sqrt(g / com_height)
+
+    cp = com_pos + (1 / omega) * com_vel
+
+    return cp
+
+
+def footstep_planner_cp(com_pos, com_vel, com_height, num_steps=3):
+    """
+    Plan footsteps using capture point.
+
+    Args:
+        com_pos: Current CoM position
+        com_vel: Current CoM velocity
+        com_height: CoM height
+        num_steps: Number of steps to plan
+
+    Returns:
+        List of footstep positions
+    """
+    g = 9.81
+    omega = np.sqrt(g / com_height)
+    step_time = 0.4  # seconds
+
+    footsteps = []
+    current_com = com_pos.copy()
+    current_vel = com_vel.copy()
+
+    for i in range(num_steps):
+        # Compute capture point
+        cp = compute_capture_point(current_com, current_vel, com_height)
+
+        # Footstep position = capture point
+        footstep = cp.copy()
+
+        # Alternate left/right
+        footstep[1] += 0.1 if i % 2 == 0 else -0.1
+
+        footsteps.append(footstep)
+
+        # Update CoM (simplified dynamics)
+        current_com = footstep  # CoM moves to footstep
+        current_vel *= 0.9  # Decay velocity
+
+    return footsteps
+
+
+# Example: Push recovery
+if __name__ == "__main__":
+    # Robot state
+    com_pos = np.array([0.0, 0.0])
+    com_vel = np.array([0.5, 0.2])  # Moving forward with lateral component
+    height = 1.0
+
+    # Compute CP
+    cp = compute_capture_point(com_pos, com_vel, height)
+    print(f"Capture Point: ({cp[0]:.3f}, {cp[1]:.3f})")
+
+    # Plan recovery steps
+    footsteps = footstep_planner_cp(com_pos, com_vel, height, num_steps=3)
+
+    print("\nRecovery footsteps:")
+    for i, fs in enumerate(footsteps):
+        print(f"  Step {i+1}: ({fs[0]:.3f}, {fs[1]:.3f})")
+```
+
+---
+
+## 11.6 Whole-Body Control
+
+### Quadratic Programming Formulation
+
+**Goal**: Control all DOF simultaneously while satisfying constraints [5].
+
+$$
+\begin{aligned}
+\min_{\ddot{\mathbf{q}}, \boldsymbol{\tau}} \quad & \| \ddot{\mathbf{x}}_{des} - J(\mathbf{q})\ddot{\mathbf{q}} \|^2 + \lambda \| \boldsymbol{\tau} \|^2 \\
+\text{subject to} \quad & M(\mathbf{q})\ddot{\mathbf{q}} + C(\mathbf{q}, \dot{\mathbf{q}}) + G(\mathbf{q}) = \boldsymbol{\tau} + J_c^T \mathbf{f}_c \\
+& \boldsymbol{\tau}_{min} \leq \boldsymbol{\tau} \leq \boldsymbol{\tau}_{max} \\
+& \mathbf{f}_c \text{ satisfies friction cone constraints}
+\end{aligned}
+$$
+
+**Variables**:
+- $\ddot{\mathbf{q}}$: Joint accelerations
+- $\boldsymbol{\tau}$: Joint torques
+- $\mathbf{f}_c$: Contact forces
+
+### Python Implementation (using quadprog)
+
+```python
+#!/usr/bin/env python3
+"""
+Whole-body controller using Quadratic Programming.
+
+Reference: Sentis & Khatib, "Synthesis of Whole-Body Behaviors through
+           Hierarchical Control," IJHR 2005
+"""
+
+import numpy as np
+from quadprog import solve_qp
+
+
+class WholeBodyController:
+    """QP-based whole-body controller for humanoid."""
+
+    def __init__(self, num_dof=30):
+        self.num_dof = num_dof
+
+    def compute_control(self, state, desired_com_acc, desired_swing_foot_acc):
+        """
+        Solve QP for joint accelerations and torques.
+
+        Args:
+            state: Robot state (q, q_dot)
+            desired_com_acc: Desired CoM acceleration [ax, ay, az]
+            desired_swing_foot_acc: Desired swing foot acceleration
+
+        Returns:
+            Joint torques
+        """
+        q, q_dot = state['positions'], state['velocities']
+
+        # Compute robot dynamics matrices
+        M = self.compute_mass_matrix(q)  # Mass matrix
+        C = self.compute_coriolis_matrix(q, q_dot)  # Coriolis + centrifugal
+        G = self.compute_gravity_vector(q)  # Gravity
+
+        # Compute Jacobians
+        J_com = self.compute_com_jacobian(q)  # CoM Jacobian
+        J_swing = self.compute_foot_jacobian(q, foot='swing')  # Swing foot Jacobian
+
+        # Formulate QP
+        # min 0.5 * x^T P x + q^T x
+        # subject to: G x <= h, A x = b
+
+        # Decision variables: [q_ddot, tau]
+        n_vars = self.num_dof * 2
+
+        # Objective: Track desired accelerations + minimize torques
+        P = np.eye(n_vars)
+        P[:self.num_dof, :self.num_dof] = J_com.T @ J_com + 0.1 * J_swing.T @ J_swing
+        P[self.num_dof:, self.num_dof:] = 0.01 * np.eye(self.num_dof)  # Torque regularization
+
+        q_obj = np.zeros(n_vars)
+        q_obj[:self.num_dof] = -(J_com.T @ desired_com_acc + 0.1 * J_swing.T @ desired_swing_foot_acc)
+
+        # Equality constraints: M * q_ddot = tau + C + G
+        A_eq = np.hstack([M, -np.eye(self.num_dof)])
+        b_eq = -(C + G)
+
+        # Inequality constraints: torque limits
+        tau_min = -100 * np.ones(self.num_dof)
+        tau_max = 100 * np.ones(self.num_dof)
+
+        G_ineq = np.vstack([
+            np.hstack([np.zeros((self.num_dof, self.num_dof)), np.eye(self.num_dof)]),  # tau <= tau_max
+            np.hstack([np.zeros((self.num_dof, self.num_dof)), -np.eye(self.num_dof)])  # -tau <= -tau_min
+        ])
+        h_ineq = np.hstack([tau_max, -tau_min])
+
+        # Solve QP
+        solution = solve_qp(P, q_obj, G_ineq.T, h_ineq, A_eq.T, b_eq)
+
+        # Extract torques
+        tau = solution[self.num_dof:]
+
+        return tau
+
+    def compute_mass_matrix(self, q):
+        """Compute mass matrix M(q)."""
+        # Placeholder - use RBDL, Pinocchio, or Drake for real implementation
+        return np.eye(self.num_dof)
+
+    def compute_coriolis_matrix(self, q, q_dot):
+        """Compute Coriolis and centrifugal forces C(q, q_dot)."""
+        return np.zeros(self.num_dof)
+
+    def compute_gravity_vector(self, q):
+        """Compute gravity compensation G(q)."""
+        return np.zeros(self.num_dof)
+
+    def compute_com_jacobian(self, q):
+        """Compute CoM Jacobian."""
+        return np.random.rand(3, self.num_dof)  # Placeholder
+
+    def compute_foot_jacobian(self, q, foot='swing'):
+        """Compute foot Jacobian."""
+        return np.random.rand(3, self.num_dof)  # Placeholder
+```
+
+---
+
+## Exercises
+
+### Basic (40%)
+1. **Implement** 2D forward kinematics for a 3-link arm. Verify with manual calculation for q = [30°, 45°, -60°].
+
+2. **Solve** analytical IK for a 2-link planar arm reaching (0.5, 0.3). Verify solution with FK.
+
+3. **Compute** ZMP for a humanoid with CoM at (0, 0, 1.0) and acceleration (1.0, 0, 0) m/s². Is it inside a 20cm × 10cm foot?
+
+### Intermediate (40%)
+4. **Implement** numerical IK using Jacobian pseudo-inverse. Test on a 7-DOF arm reaching 10 random targets. Report success rate and average iterations.
+
+5. **Generate** a walking pattern for 10 steps using ZMP preview control. Plot CoM and ZMP trajectories. Verify ZMP stays within support polygon.
+
+6. **Compute** capture point for a robot with:
+   - CoM: (0.2, 0.1, 1.0)
+   - Velocity: (0.8, -0.3, 0)
+   Plan next footstep position.
+
+### Advanced (20%)
+7. **Whole-body controller**: Implement QP-based controller for:
+   - Task 1: CoM tracking (priority 1)
+   - Task 2: Swing foot tracking (priority 2)
+   - Task 3: Minimize joint velocities (priority 3)
+   Test on a simulated humanoid.
+
+8. **Gait optimization**: Use trajectory optimization (TOPP, CHOMP) to generate energy-efficient walking patterns. Minimize:
+   $$\int_0^T \|\boldsymbol{\tau}(t)\|^2 dt$$
+   Compare energy consumption with ZMP-based gait.
+
+9. **Capstone Integration**:
+   - Implement whole-body controller for your Week 13 humanoid
+   - Tasks: Walk to target, maintain balance, track swing foot
+   - Test: Walk 3m while maintaining cup level (no spilling)
+   - Submit: Controller code, video, performance metrics
+
+---
+
+## Summary
+
+- **Forward kinematics**: DH parameters map joint angles to end-effector pose
+- **Inverse kinematics**: Analytical (closed-form) or numerical (Jacobian-based)
+- **ZMP**: Stability criterion for bipedal walking (inside support polygon)
+- **Gait generation**: ZMP preview control, trajectory optimization
+- **Capture point**: Footstep planning for push recovery
+- **Whole-body control**: QP-based optimization for multi-objective tasks
+- **Humanoid kinematics**: 30-50 DOF systems require careful coordination
+
+**Next**: [Week 12: VLA Models & Dexterous Manipulation](./week-12)
+
+---
+
+## References
+
+[1] ACM Computing Surveys, "Humanoid Robots and Humanoid AI," DOI: 10.1145/3770574, 2025.
+
+[2] ACM Survey, p. 35.
+
+[3] M. Vukobratović and B. Borovac, "Zero-Moment Point - Thirty Five Years of its Life," *IJHR*, vol. 1, no. 1, 2004.
+
+[4] J. Pratt et al., "Capture Point: A Step toward Humanoid Push Recovery," *ICHR*, 2006.
+
+[5] L. Sentis and O. Khatib, "Synthesis of Whole-Body Behaviors through Hierarchical Control of Behavioral Primitives," *IJHR*, 2005.
+
+---
+
+

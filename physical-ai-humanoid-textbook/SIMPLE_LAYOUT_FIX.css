@@ -1,0 +1,33 @@
+/* SIMPLE LAYOUT FIX - Add this to custom.css */
+
+/* Force 3-column layout on desktop */
+@media (min-width: 997px) {
+  /* Make sure the doc page uses flexbox */
+  .container .row {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+  }
+  
+  /* Left sidebar: 280px */
+  .container .row > aside:first-child,
+  .container .row > .col:first-child {
+    flex: 0 0 280px !important;
+    max-width: 280px !important;
+  }
+  
+  /* Main content: flexible */
+  .container .row > div[class*="docItemCol"],
+  .container .row > .col:nth-child(2) {
+    flex: 1 !important;
+    max-width: none !important;
+  }
+  
+  /* Right TOC/Chat: 340px */
+  .container .row > aside:last-child,
+  .container .row > .col:last-child,
+  aside.theme-doc-toc-desktop {
+    flex: 0 0 340px !important;
+    max-width: 340px !important;
+    display: block !important;
+  }
+}
