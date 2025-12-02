@@ -1,9 +1,9 @@
-title: {{title}}
-emoji: {{emoji}}
-colorFrom: {{colorFrom}}
-colorTo: {{colorTo}}
-sdk: {{sdk}}
-sdk_version: "{{sdkVersion}}"
+title: Physical AI Textbook
+emoji: 📚
+colorFrom: blue
+colorTo: green
+sdk: docker
+pinned: false
 app_file: app/main.py
 
 # Physical AI Textbook Backend
