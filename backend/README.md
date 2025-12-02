@@ -1,3 +1,11 @@
+title: {{title}}
+emoji: {{emoji}}
+colorFrom: {{colorFrom}}
+colorTo: {{colorTo}}
+sdk: {{sdk}}
+sdk_version: "{{sdkVersion}}"
+app_file: app/main.py
+
 # Physical AI Textbook Backend
 
 FastAPI backend providing RAG-powered Q&A, translation, and personalization services for the Physical AI & Humanoid Robotics interactive textbook.
