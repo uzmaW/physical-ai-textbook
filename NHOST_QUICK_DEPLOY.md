@@ -17,12 +17,12 @@
 ### 2. Set Environment Variables
 Copy these from your `backend/.env.example`:
 ```bash
-DATABASE_URL=your_neon_postgresql_url
-OPENAI_API_KEY=your_openai_key
-QDRANT_URL=your_qdrant_url  
-QDRANT_API_KEY=your_qdrant_key
-JWT_SECRET=your_jwt_secret
-HASURA_ADMIN_SECRET=generate_random_string
+DATABASE_URL=YOUR_NEON_POSTGRESQL_URL
+OPENAI_API_KEY=YOUR_OPENAI_API_KEY
+QDRANT_URL=YOUR_QDRANT_URL  
+QDRANT_API_KEY=YOUR_QDRANT_API_KEY
+JWT_SECRET=YOUR_JWT_SECRET
+HASURA_ADMIN_SECRET=YOUR_HASURA_ADMIN_SECRET
 HASURA_WEBHOOK_SECRET=generate_random_string
 ```
 

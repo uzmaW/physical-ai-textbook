@@ -48,14 +48,14 @@
    ```
 
 3. Edit `terraform.tfvars` with your values:
-   ```hcl
-   render_api_key  = "rnd_..."
-   render_owner_id = "user_xxxxx"
-   openai_api_key  = "sk-..."
-   qdrant_url      = "https://xxxxx.qdrant.io"
-   qdrant_api_key  = "ey..."
-   frontend_url    = "https://physical-ai-textbook.vercel.app"
-   ```
+    ```hcl
+    render_api_key  = "YOUR_RENDER_API_KEY"
+    render_owner_id = "YOUR_RENDER_OWNER_ID"
+    openai_api_key  = "YOUR_OPENAI_API_KEY"
+    qdrant_url      = "https://YOUR_QDRANT_INSTANCE.qdrant.io"
+    qdrant_api_key  = "YOUR_QDRANT_API_KEY"
+    frontend_url    = "https://physical-ai-textbook.vercel.app"
+    ```
 
    **IMPORTANT**: Never commit `terraform.tfvars` (it's in .gitignore)
 
@@ -154,7 +154,7 @@ Should return:
 
 Edit `terraform.tfvars`:
 ```hcl
-openai_api_key = "sk-new-key"
+openai_api_key = "YOUR_NEW_OPENAI_API_KEY"
 ```
 
 Then:

@@ -15,31 +15,31 @@ Set these secrets in your Nhost dashboard (https://app.nhost.io):
 
 ### Database & Core Services
 ```
-DATABASE_URL=your_neon_postgresql_connection_string
-JWT_SECRET=your_jwt_secret_key
-REDIS_URL=your_redis_url (optional)
+DATABASE_URL=YOUR_NEON_POSTGRESQL_CONNECTION_STRING
+JWT_SECRET=YOUR_JWT_SECRET_KEY
+REDIS_URL=YOUR_REDIS_URL (optional)
 ```
 
 ### AI Services
 ```
-OPENAI_API_KEY=your_openai_api_key
-QDRANT_URL=your_qdrant_cloud_url
-QDRANT_API_KEY=your_qdrant_api_key
-VOICE_API_BASE_URL=your_voice_api_url (optional)
+OPENAI_API_KEY=YOUR_OPENAI_API_KEY
+QDRANT_URL=YOUR_QDRANT_CLOUD_URL
+QDRANT_API_KEY=YOUR_QDRANT_API_KEY
+VOICE_API_BASE_URL=YOUR_VOICE_API_URL (optional)
 ```
 
 ### Hasura Configuration
 ```
-HASURA_ADMIN_SECRET=generate_secure_random_string
+HASURA_ADMIN_SECRET=YOUR_HASURA_ADMIN_SECRET
 HASURA_WEBHOOK_SECRET=generate_secure_random_string
 ```
 
 ### OAuth Authentication (Optional)
 ```
-AUTH_GITHUB_CLIENT_ID=your_github_oauth_client_id
-AUTH_GITHUB_CLIENT_SECRET=your_github_oauth_client_secret
-AUTH_GOOGLE_CLIENT_ID=your_google_oauth_client_id
-AUTH_GOOGLE_CLIENT_SECRET=your_google_oauth_client_secret
+AUTH_GITHUB_CLIENT_ID=YOUR_GITHUB_OAUTH_CLIENT_ID
+AUTH_GITHUB_CLIENT_SECRET=YOUR_GITHUB_OAUTH_CLIENT_SECRET
+AUTH_GOOGLE_CLIENT_ID=YOUR_GOOGLE_OAUTH_CLIENT_ID
+AUTH_GOOGLE_CLIENT_SECRET=YOUR_GOOGLE_OAUTH_CLIENT_SECRET
 ```
 
 ## 🚀 Deployment Steps
