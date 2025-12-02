@@ -1,3 +1,11 @@
+title: Physical AI Textbook
+emoji: 📚
+colorFrom: blue
+colorTo: green
+sdk: docker
+pinned: false
+app_file: app/main.py
+
 # Physical AI Textbook Backend
 
 FastAPI backend providing RAG-powered Q&A, translation, and personalization services for the Physical AI & Humanoid Robotics interactive textbook.
