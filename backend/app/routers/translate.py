@@ -20,15 +20,23 @@ except ImportError:
     print("Warning: transformers not installed. Translation features disabled.")
     print("Install with: pip install transformers torch")
 
+# Try HuggingFace API as fallback
 try:
-    from app.db.neon import get_db
+    from huggingface_hub import InferenceClient
+    HF_API_AVAILABLE = True
+except ImportError:
+    HF_API_AVAILABLE = False
+    print("Warning: huggingface_hub not installed for API mode.")
+
+from app.db.neon import get_db
+
+try:
     from app.models.user import TranslationCache
     DB_AVAILABLE = True
 except ImportError:
     DB_AVAILABLE = False
     print("Warning: Database models not available. Translation caching disabled.")
-    def get_db():
-        raise HTTPException(status_code=503, detail="Database not configured")
+    TranslationCache = None
 
 try:
     from app.services.rag import RAGService
@@ -45,12 +53,13 @@ tokenizer = None
 
 if TRANSFORMERS_AVAILABLE:
     try:
-        # Load English to Urdu translation model
+        # Load English to Urdu translation model (lazy load on first use)
         model_name = "Helsinki-NLP/opus-mt-en-ur"
-        print(f"Loading translation model: {model_name}")
-        tokenizer = MarianTokenizer.from_pretrained(model_name)
-        translator = MarianMTModel.from_pretrained(model_name)
-        print("✅ Free translation model loaded successfully!")
+        # Skip loading at startup to avoid hanging
+        # print(f"Loading translation model: {model_name}")
+        # tokenizer = MarianTokenizer.from_pretrained(model_name)
+        # translator = MarianMTModel.from_pretrained(model_name)
+        print("✅ Translation model will load on first request")
     except Exception as e:
         print(f"Warning: Could not load translation model: {e}")
         print("Translation features will be disabled.")
@@ -158,6 +167,9 @@ async def get_cached_translation(
     Returns:
         Cached translation if exists, 404 otherwise
     """
+    if not DB_AVAILABLE or not db:
+        raise HTTPException(status_code=503, detail="Database not configured")
+    
     cache_key = f"{userId}:{chapterId}"
 
     cached = db.query(TranslationCache).filter(
@@ -186,13 +198,114 @@ async def get_cached_translation(
         raise HTTPException(status_code=404, detail="Translation not cached")
 
 
+async def translate_with_libretranslate(text: str, source_lang: str = "en", target_lang: str = "ur") -> str:
+    """Translate using LibreTranslate API (FREE, no API key needed)"""
+    import httpx
+
+    try:
+        # Use public LibreTranslate instance (FREE)
+        url = "https://libretranslate.com/translate"
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(url, json={
+                "q": text,
+                "source": source_lang,
+                "target": target_lang,
+                "format": "text"
+            })
+
+            if response.status_code == 200:
+                result = response.json()
+                return result.get("translatedText", text)
+            else:
+                raise Exception(f"LibreTranslate API returned {response.status_code}")
+
+    except Exception as e:
+        print(f"LibreTranslate API failed: {e}")
+        raise HTTPException(status_code=503, detail=f"Translation failed: {str(e)}")
+
+
+async def translate_with_hf_api(text: str, model_name: str = "Helsinki-NLP/opus-mt-en-ur") -> str:
+    """Translate using HuggingFace Inference API (FREE tier with rate limits)"""
+    from app.config import settings
+
+    if not HF_API_AVAILABLE:
+        raise HTTPException(status_code=503, detail="HuggingFace API not available")
+
+    try:
+        client = InferenceClient(token=settings.HUGGINGFACE_API_KEY if settings.HUGGINGFACE_API_KEY else None)
+
+        # HuggingFace Inference API for translation
+        response = client.translation(text, model=model_name)
+        return response['translation_text']
+    except Exception as e:
+        print(f"⚠️  HF API translation failed: {e}")
+        # Don't raise, let caller handle fallback
+        return None
+
+
+async def translate_with_local_model(text: str) -> str:
+    """Translate using locally loaded model"""
+    global translator, tokenizer
+
+    # Lazy load model on first request
+    if not translator or not tokenizer:
+        if not TRANSFORMERS_AVAILABLE:
+            raise HTTPException(
+                status_code=503,
+                detail="Translation service not available. Install transformers: pip install transformers torch"
+            )
+
+        try:
+            model_name = "Helsinki-NLP/opus-mt-en-ur"
+            print(f"Loading translation model: {model_name}")
+            tokenizer = MarianTokenizer.from_pretrained(model_name)
+            translator = MarianMTModel.from_pretrained(model_name)
+
+            # Optimize model for CPU inference
+            translator.eval()  # Set to evaluation mode
+            translator = translator.to('cpu')  # Explicitly use CPU
+
+            print("✅ Free translation model loaded successfully!")
+        except Exception as e:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Could not load translation model: {str(e)}"
+            )
+
+    # Split content into sentences for better translation
+    sentences = re.split(r'([.!?]+)', text)
+    translated_sentences = []
+
+    for sentence in sentences:
+        if sentence.strip() and not re.match(r'^[.!?]+$', sentence):
+            # Tokenize and translate
+            inputs = tokenizer(sentence, return_tensors="pt", padding=True, truncation=True, max_length=512)
+
+            # Use torch.no_grad() for faster inference (no gradient computation)
+            import torch
+            with torch.no_grad():
+                outputs = translator.generate(**inputs, max_length=512, num_beams=4)
+
+            translated = tokenizer.decode(outputs[0], skip_special_tokens=True)
+            translated_sentences.append(translated)
+        else:
+            translated_sentences.append(sentence)
+
+    return ''.join(translated_sentences)
+
+
 @router.post("/", response_model=TranslateResponse)
 async def translate_chapter(
     request: TranslateRequest,
-    db: Session = Depends(get_db) if DB_AVAILABLE else None
+    db: Session = Depends(get_db)
 ):
     """
     Translate chapter content and cache result using free Helsinki-NLP model.
+
+    Supports two modes:
+    - API mode (USE_HF_API=true): Uses HuggingFace Inference API (small Docker image)
+    - Local mode (USE_HF_API=false): Downloads and runs model locally (large Docker image)
 
     Body:
         {
@@ -205,29 +318,65 @@ async def translate_chapter(
     Returns:
         Translated content with caching metadata
     """
-    if not translator or not tokenizer:
-        raise HTTPException(
-            status_code=503,
-            detail="Translation service not available. Install transformers: pip install transformers torch"
-        )
+    from app.config import settings
 
     try:
-        # Split content into sentences for better translation
-        sentences = re.split(r'([.!?]+)', request.content)
-        translated_sentences = []
+        translated_text = None
+        translation_method = "unknown"
 
-        for sentence in sentences:
-            if sentence.strip() and not re.match(r'^[.!?]+$', sentence):
-                # Tokenize and translate
-                inputs = tokenizer(sentence, return_tensors="pt", padding=True, truncation=True, max_length=512)
-                outputs = translator.generate(**inputs)
-                translated = tokenizer.decode(outputs[0], skip_special_tokens=True)
-                translated_sentences.append(translated)
-            else:
-                translated_sentences.append(sentence)
+        # Three-tier fallback system for maximum reliability
+        if settings.USE_HF_API:
+            # Tier 1: Try HuggingFace API first (fast, good quality, has rate limits)
+            print("📡 [1/3] Trying HuggingFace API for translation...")
+            try:
+                translated_text = await translate_with_hf_api(request.content)
+                if translated_text:
+                    translation_method = "huggingface-api"
+                    print("✅ Translated with HuggingFace API")
+            except Exception as e:
+                print(f"⚠️  HuggingFace API failed: {e}")
 
-        translated_text = ''.join(translated_sentences)
+            # Tier 2: Fallback to LibreTranslate if HF API fails
+            if translated_text is None:
+                print("📡 [2/3] Falling back to LibreTranslate API...")
+                try:
+                    translated_text = await translate_with_libretranslate(
+                        request.content,
+                        source_lang="en",
+                        target_lang=request.targetLang
+                    )
+                    translation_method = "libretranslate-api"
+                    print("✅ Translated with LibreTranslate API")
+                except Exception as e:
+                    print(f"⚠️  LibreTranslate API failed: {e}")
+
+            # Tier 3: Final fallback to local model if both APIs fail
+            if translated_text is None:
+                print("💻 [3/3] Falling back to local model...")
+                try:
+                    translated_text = await translate_with_local_model(request.content)
+                    translation_method = "local-model"
+                    print("✅ Translated with local model")
+                except Exception as e:
+                    print(f"❌ Local model failed: {e}")
+                    raise HTTPException(
+                        status_code=503,
+                        detail="All translation methods failed. Please try again later."
+                    )
+        else:
+            # Direct local model usage (skip APIs)
+            print("💻 Using local model for translation")
+            translated_text = await translate_with_local_model(request.content)
+            translation_method = "local-model"
+
+        if translated_text is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Translation failed. Please try again later."
+            )
+
         char_count = len(request.content)
+        print(f"📊 Translation completed using: {translation_method}")
 
         # Cache in database if available
         if DB_AVAILABLE and db:
@@ -241,7 +390,7 @@ async def translate_chapter(
                     source_lang="en",
                     target_lang=request.targetLang,
                     translated_content=translated_text,
-                    translation_service="helsinki-nlp",
+                    translation_service=translation_method,  # Track which method was used
                     character_count={"source": char_count, "translated": len(translated_text)}
                 )
 
@@ -296,6 +445,9 @@ async def clear_translation_cache(
     Returns:
         Success message
     """
+    if not DB_AVAILABLE or not db:
+        raise HTTPException(status_code=503, detail="Database not configured")
+    
     cache_key = f"{userId}:{chapterId}"
 
     deleted = db.query(TranslationCache).filter(

@@ -1,3 +1,6 @@
+# Lightweight requirements for HuggingFace API mode
+# Docker image size: ~500MB (vs 2GB with local models)
+
 # FastAPI Core
 uvicorn==0.38.0
 fastapi==0.123.5
@@ -9,12 +12,11 @@ requests==2.32.5
 redis==7.1.0
 python-dotenv==1.2.1
 
-# OpenAI & AI
+# OpenAI & AI (lightweight)
 openai==2.8.1
-langchain==1.1.0
-langchain-openai==1.1.0
 tiktoken==0.12.0
 
+# HuggingFace Hub for API access (no torch/transformers!)
 huggingface-hub==0.36.0
 
 #Database
@@ -36,18 +38,8 @@ passlib[bcrypt]==1.7.4
 python-frontmatter==1.1.0
 markdown==3.10
 
-# Translation (Free alternative to Google Cloud)
-sentencepiece==0.2.1
-tokenizers==0.22.1
-torch==2.9.1
-transformers==4.57.3
-
-# Voice & Audio (Free/Open-Source)
+# Voice & Audio (Free/Open-Source) - Optional, comment out if not needed
 openai-whisper==20250625
 edge_tts==7.2.3
 pydub==0.25.1
 librosa==0.11.0
-
-#Test
-pytest==9.0.1
-pytest-asyncio==1.3.0

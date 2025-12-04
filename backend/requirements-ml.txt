@@ -1,0 +1,19 @@
+# Include base requirements
+-r requirements-base.txt
+
+# LangChain (only if RAG is enabled)
+langchain==1.1.0
+langchain-openai==1.1.0
+
+# HuggingFace & Translation
+huggingface-hub==0.36.0
+sentencepiece==0.2.1
+tokenizers==0.22.1
+torch==2.9.1
+transformers==4.57.3
+
+# Voice & Audio
+openai-whisper==20250625
+edge_tts==7.2.3
+pydub==0.25.1
+librosa==0.11.0

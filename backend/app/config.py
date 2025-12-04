@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
     # Database
-    DATABASE_URL: str = "postgresql://user:pass@localhost/textbook"
+    DATABASE_URL: str = "postgresql+psycopg://user:pass@localhost/textbook"
 
     # Qdrant Vector Store
     QDRANT_URL: str = "https://468ff8ad-822f-4a3a-9f5c-b8953bbadc70.us-east-1-1.aws.cloud.qdrant.io:6333"
@@ -18,6 +18,10 @@ class Settings(BaseSettings):
 
     # OpenAI
     OPENAI_API_KEY: str = ""
+
+    # HuggingFace
+    HUGGINGFACE_API_KEY: str = ""  # Optional for free Inference API
+    USE_HF_API: bool = True  # True = API mode (small image), False = local model
 
     # Google Cloud
     GOOGLE_APPLICATION_CREDENTIALS: str = ""

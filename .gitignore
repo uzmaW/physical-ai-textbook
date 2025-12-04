@@ -1,6 +1,10 @@
 # Backend
+pycache/
+*.py[cod]
+*$py.class
 backend/venv/
-backend/__pycache__/
+backend/bk_env/
+backend/__pycache__
 backend/*.pyc
 backend/*.pyo
 backend/*.egg-info/
@@ -10,7 +14,8 @@ backend/backend.log
 backend/backend.pid
 backend/frontend.pid
 backend/.DS_Store
-
+./backend/*.sqlite3
+.pyc
 # Frontend
 physical-ai-humanoid-textbook/node_modules/
 physical-ai-humanoid-textbook/build/

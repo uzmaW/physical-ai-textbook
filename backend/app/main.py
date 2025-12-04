@@ -5,7 +5,7 @@ Provides RAG, translation, authentication, and personalization services
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import chat, auth, conversations, translate, voice
+from app.routers import chat, auth, conversations, translate, voice, capstone_chat
 # from app.routers import personalization  # To be added
 import os
 
@@ -44,6 +44,7 @@ app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(conversations.router, prefix="/api/conversations", tags=["conversations"])
 app.include_router(translate.router, prefix="/api/translate", tags=["translation"])
 app.include_router(voice.router, prefix="/api/voice", tags=["voice"])
+app.include_router(capstone_chat.router)  # Routes at /api/capstone/*
 # app.include_router(personalization.router, prefix="/api/personalization", tags=["personalization"])
 
 @app.get("/")
