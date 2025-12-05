@@ -43,7 +43,6 @@ ENV PATH=/root/.local/bin:$PATH
 # Create cache directories for models (optional)
 RUN mkdir -p /tmp/voice_cache /tmp/model_cache
 ENV HF_HOME=/tmp/model_cache
-ENV TRANSFORMERS_CACHE=/tmp/model_cache
 
 # Expose port for Hugging Face Spaces
 EXPOSE 8000
