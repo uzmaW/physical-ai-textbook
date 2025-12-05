@@ -17,4 +17,4 @@ jobs:
       - name: Push backend to hub
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: git subtree push --prefix backend https://uzmai:$HF_TOKEN@huggingface.co/spaces/uzmai/book main
+        run: git push https://uzmai:$HF_TOKEN@huggingface.co/spaces/uzmai/book main
