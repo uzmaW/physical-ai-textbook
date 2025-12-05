@@ -32,6 +32,9 @@ COPY . .
 # Make sure scripts are in PATH
 ENV PATH=/root/.local/bin:$PATH
 
+# Set HuggingFace cache directory (replaces deprecated TRANSFORMERS_CACHE)
+ENV HF_HOME=/tmp/huggingface_cache
+
 # Expose port
 EXPOSE 8000
 
