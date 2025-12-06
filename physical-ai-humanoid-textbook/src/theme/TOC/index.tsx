@@ -31,6 +31,7 @@ export default function TOC() {
       style={{
         position: 'sticky',
         top: 0,
+        right:0,
         height: '100vh',
         width: '370px',
         maxWidth: '370px',

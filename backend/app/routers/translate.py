@@ -4,6 +4,11 @@ Uses free Helsinki-NLP translation models from Hugging Face
 Indexes translations in Qdrant for RAG search
 """
 
+import os
+# IMPORTANT: Set HF_HOME before importing transformers to avoid deprecation warning
+if 'HF_HOME' not in os.environ:
+    os.environ['HF_HOME'] = '/tmp/huggingface_cache'
+
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session

@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     # HuggingFace
     HUGGINGFACE_API_KEY: str = ""  # Optional for free Inference API
     USE_HF_API: bool = True  # True = API mode (small image), False = local model
+    HF_HOME: str = "/tmp/huggingface_cache"  # Cache directory for HuggingFace models
 
     # Google Cloud
     GOOGLE_APPLICATION_CREDENTIALS: str = ""

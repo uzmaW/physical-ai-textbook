@@ -14,7 +14,7 @@ jobs:
         with:
           fetch-depth: 0
           lfs: true
-      - name: Push backend to hub
+      - name: Push repo to hub
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: git push https://uzmai:$HF_TOKEN@huggingface.co/spaces/uzmai/book main
