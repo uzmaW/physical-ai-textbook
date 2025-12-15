@@ -3,9 +3,7 @@
  * Handles login, logout, register, and token management
  */
 
-const API_BASE_URL = typeof window !== 'undefined'
-  ? (window as any).REACT_APP_API_URL || 'http://localhost:8000'
-  : 'http://localhost:8000';
+import { API_BASE_URL } from '../config/env';
 
 const TOKEN_KEY = 'auth_token';
 const USER_KEY = 'user_info';

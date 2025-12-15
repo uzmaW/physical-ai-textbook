@@ -3,14 +3,35 @@
 // Custom layout: Cover page → 3-column layout (sidebar, content, RAG chat)
 
 import {themes as prismThemes} from 'prism-react-renderer';
+import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-/** @type {import('@docusaurus/types').Config} */
+// Establish __dirname in ESM context
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Load base and environment-specific .env files so process.env is populated
+dotenv.config({ path: path.resolve(__dirname, '.env') });
+dotenv.config({ path: path.resolve(
+  __dirname,
+  process.env.NODE_ENV === 'production' ? '.env.production' : '.env.local'
+)});
+
+// Resolve API base URL once at build time (used for DefinePlugin and customFields)
+const RESOLVED_API_BASE_URL =
+  process.env.REACT_APP_API_URL ||
+  process.env.NEXT_PUBLIC_API_URL ||
+  process.env.VITE_API_URL ||
+  process.env.API_BASE_URL ||
+  'http://localhost:8000';
+/** @type {import('@docusaurus/types').Config & { configureWebpack?: any }} */
 const config = {
   title: 'Physical AI & Humanoid Robotics',
   tagline: 'Embodied Intelligence in Practice',
   favicon: 'img/favicon.ico',
 
-  url: 'https://humanoid-ai-textbook.piaic.org',
+  url: 'https://physical-ai-textbook-snowy.vercel.app',
   baseUrl: '/',
 
   organizationName: 'piaic',
@@ -122,8 +143,31 @@ const config = {
         },
       };
     },
+    async function envDefinePlugin() {
+      return {
+        name: 'env-define-plugin',
+        configureWebpack() {
+          return {
+            plugins: [
+              new (require('webpack')).DefinePlugin({
+                'process.env.REACT_APP_API_URL': JSON.stringify(process.env.REACT_APP_API_URL || ''),
+                'process.env.NEXT_PUBLIC_API_URL': JSON.stringify(process.env.NEXT_PUBLIC_API_URL || ''),
+                'process.env.VITE_API_URL': JSON.stringify(process.env.VITE_API_URL || ''),
+                'process.env.API_BASE_URL': JSON.stringify(process.env.API_BASE_URL || ''),
+                __API_BASE_URL__: JSON.stringify(RESOLVED_API_BASE_URL),
+              }),
+            ],
+          };
+        },
+      };
+    },
   ],
+  
+  // Expose a resolved API base URL via customFields for runtime access if needed
+  customFields: {
+    API_BASE_URL: RESOLVED_API_BASE_URL,
+  },
 
-};
+  };
 
 export default config;
