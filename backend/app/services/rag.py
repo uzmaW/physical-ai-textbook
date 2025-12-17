@@ -121,7 +121,14 @@ class RAGService:
         # Build filters
         filters = []
 
-        if user_level and user_level != "all":
+        # For structural queries (chapters, TOC, book info), don't apply difficulty filter
+        # These queries need access to TOC which has beginner difficulty
+        structural_keywords = ["chapter", "chapters", "total", "how many", "structure", "organization", "toc", "table", "book"]
+        query_lower = query.lower()
+        is_structural_query = any(keyword in query_lower for keyword in structural_keywords)
+
+        # Only apply difficulty filter for non-structural queries
+        if user_level and user_level != "all" and not is_structural_query:
             filters.append(
                 FieldCondition(
                     key="difficulty",
@@ -146,7 +153,7 @@ class RAGService:
                 )
             )
 
-        # Search Qdrant
+        # Search Qdrant - retrieve more results to ensure TOC is included
         search_results = self.qdrant_client.query_points(
             collection_name=self.collection_name,
             query=query_vector,
@@ -155,6 +162,23 @@ class RAGService:
             with_payload=True,
             with_vectors=False
         ).points
+
+        # If no difficulty filter (or beginner level), also search without difficulty filter
+        # to ensure we get structural questions like TOC
+        if (not filters or user_level == "beginner") and len(search_results) < top_k:
+            search_results_unfiltered = self.qdrant_client.query_points(
+                collection_name=self.collection_name,
+                query=query_vector,
+                limit=top_k * 2,
+                with_payload=True,
+                with_vectors=False
+            ).points
+            
+            # Merge and deduplicate
+            result_ids = {r.id for r in search_results}
+            for r in search_results_unfiltered:
+                if r.id not in result_ids and len(search_results) < top_k:
+                    search_results.append(r)
 
         # Format results
         context_chunks = []
@@ -167,7 +191,8 @@ class RAGService:
                 "score": result.score,
                 "chunk_index": result.payload.get("chunk_index", 0),
                 "language": result.payload.get("language", "en"),
-                "is_translation": result.payload.get("is_translation", False)
+                "is_translation": result.payload.get("is_translation", False),
+                "is_toc": result.payload.get("is_toc", False)
             })
 
         return context_chunks
@@ -277,18 +302,44 @@ Context from textbook:
         if selected_text:
             enhanced_query = f"Context: '{selected_text[:200]}...'\n\nQuestion: {question}"
 
-        # Search for relevant context (reduced to 3 for speed)
+        # Search for relevant context - retrieve 5 to ensure TOC is included if relevant
         context_chunks = await self.search_context(
             query=enhanced_query,
             user_level=user_level,
             language=language,
-            top_k=3  # Reduced from 5 to 3 for faster processing
+            top_k=5  # Retrieve more results to ensure TOC is included
         )
 
-        # Generate answer
+        # Prioritize TOC chunks for structural questions (chapters, structure, organization)
+        structural_keywords = ["chapter", "chapters", "total", "how many", "structure", "organization", "toc", "table"]
+        question_lower = question.lower()
+        has_structural_query = any(keyword in question_lower for keyword in structural_keywords)
+        
+        # For structural questions, ensure TOC is included
+        toc_chunk = None
+        non_toc_chunks = []
+        
+        for chunk in context_chunks:
+            if chunk.get("is_toc"):
+                toc_chunk = chunk
+            else:
+                non_toc_chunks.append(chunk)
+        
+        # Arrange chunks: TOC first for structural questions, then others
+        if has_structural_query and toc_chunk:
+            # Put TOC first for structural questions
+            context_to_use = [toc_chunk] + non_toc_chunks[:2]
+        elif toc_chunk and len(non_toc_chunks) < 2:
+            # Include TOC if we don't have enough other chunks
+            context_to_use = [toc_chunk] + non_toc_chunks[:2]
+        else:
+            # Otherwise use top 3 results
+            context_to_use = context_chunks[:3]
+
+        # Generate answer - pass selected context chunks
         result = await self.generate_answer(
             question=question,
-            context_chunks=context_chunks,
+            context_chunks=context_to_use,
             user_level=user_level,
             language=language
         )

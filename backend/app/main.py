@@ -23,6 +23,7 @@ allowed_origins = [
     "http://localhost:3000",  # Local development
     "http://localhost:5173",  # Vite dev
     "https://piaic.github.io",  # Production
+    "https://physical-ai-textbook-snowy.vercel.app",  # Vercel deployment
 ]
 
 # Add environment-specific domain
@@ -43,6 +44,7 @@ app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(conversations.router, prefix="/api/conversations", tags=["conversations"])
 app.include_router(translate.router, prefix="/api/translate", tags=["translation"])
+app.include_router(translate.router, prefix="/translate", tags=["translation-legacy"])  # Legacy path for frontend
 app.include_router(voice.router, prefix="/api/voice", tags=["voice"])
 app.include_router(capstone_chat.router)  # Routes at /api/capstone/*
 # app.include_router(personalization.router, prefix="/api/personalization", tags=["personalization"])

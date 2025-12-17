@@ -104,8 +104,8 @@ async def embed_chapter(chapter_path: Path, openai_client: OpenAI, qdrant_client
         )
         vector = response.data[0].embedding
 
-        # Create unique ID
-        chunk_id = hashlib.md5(f"{metadata['id']}-chunk-{idx}".encode()).hexdigest()
+        # Create unique ID (must be integer)
+        chunk_id = int(hashlib.md5(f"{metadata['id']}-chunk-{idx}".encode()).hexdigest(), 16) % (2**63)
 
         # Create point
         point = PointStruct(
@@ -136,6 +136,84 @@ async def embed_chapter(chapter_path: Path, openai_client: OpenAI, qdrant_client
     print(f"   ✅ Uploaded {len(chunks)} chunks to Qdrant")
 
 
+async def embed_toc(chapter_files: list[Path], openai_client: OpenAI, qdrant_client: QdrantClient):
+    """
+    Generate and embed a table of contents chunk.
+    
+    This ensures factual queries like "how many chapters" work correctly.
+    """
+    print("📑 Generating Table of Contents...")
+    
+    # Build TOC from chapter metadata
+    total_chapters = len(chapter_files)
+    
+    toc_lines = [
+        "# Table of Contents - Complete Textbook Structure",
+        "",
+        f"TOTAL NUMBER OF CHAPTERS: {total_chapters}",
+        "",
+        f"This textbook contains exactly {total_chapters} chapters covering Physical AI and Humanoid Robotics:",
+        ""
+    ]
+    
+    chapter_info = []
+    for idx, chapter_file in enumerate(chapter_files, 1):
+        try:
+            post = frontmatter.load(chapter_file)
+            title = post.metadata.get('title', post.metadata.get('sidebar_label', chapter_file.stem))
+            chapter_id = post.metadata.get('id', chapter_file.stem)
+            toc_lines.append(f"Chapter {idx}: {title}")
+            chapter_info.append({
+                'number': idx,
+                'title': title,
+                'id': chapter_id
+            })
+        except Exception as e:
+            print(f"   ⚠️  Error reading {chapter_file.name}: {e}")
+            toc_lines.append(f"Chapter {idx}: {chapter_file.stem}")
+    
+    toc_content = "\n".join(toc_lines)
+    
+    # Generate embedding for TOC
+    response = openai_client.embeddings.create(
+        model="text-embedding-3-large",
+        input=toc_content
+    )
+    vector = response.data[0].embedding
+    
+    # Create unique ID for TOC (must be integer)
+    toc_id = int(hashlib.md5("TABLE_OF_CONTENTS".encode()).hexdigest(), 16) % (2**63)
+    
+    # Create TOC point
+    toc_point = PointStruct(
+        id=toc_id,
+        vector=vector,
+        payload={
+            "content": toc_content,
+            "chapter_id": "TABLE_OF_CONTENTS",
+            "chapter_title": "Table of Contents",
+            "sidebar_label": "Table of Contents",
+            "url": "/toc",
+            "chunk_index": 0,
+            "total_chunks": 1,
+            "is_toc": True,
+            "total_chapters": len(chapter_files),
+            "chapter_count": len(chapter_files),
+            "difficulty": "beginner",
+            "tokens": count_tokens(toc_content)
+        }
+    )
+    
+    # Upload TOC to Qdrant
+    qdrant_client.upsert(
+        collection_name="textbook_chapters",
+        points=[toc_point]
+    )
+    
+    print(f"   ✅ TOC uploaded with {len(chapter_files)} chapters listed")
+    return toc_content
+
+
 async def embed_all_chapters():
     """
     Embed all textbook chapters.
@@ -164,6 +242,9 @@ async def embed_all_chapters():
     chapter_files = sorted(docs_dir.glob("week-*.mdx"))
 
     print(f"\n📚 Found {len(chapter_files)} chapters to process\n")
+
+    # Embed table of contents first
+    await embed_toc(chapter_files, openai_client, qdrant_client)
 
     total_chunks = 0
 

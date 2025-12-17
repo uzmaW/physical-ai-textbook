@@ -130,21 +130,21 @@ def setup_collection(client: QdrantClient, collection_name: str, force: bool = F
     print(f"✅ Collection '{collection_name}' created with indexes")
 
 
-async def index_chapter(
+def get_chapter_chunks(
     chapter_path: Path,
-    openai_client: OpenAI,
-    qdrant_client: QdrantClient,
-    collection_name: str,
     verbose: bool = False
-) -> int:
+) -> tuple[list[str], list[dict]]:
     """
-    Index a single chapter file.
+    Process a chapter file and return its chunks and metadata.
 
     Returns:
-        Number of chunks indexed
+        A tuple containing a list of chunks and a list of metadata dicts.
     """
     if verbose:
         print(f"\n📄 Processing: {chapter_path.name}")
+
+    chunks = []
+    metadata_list = []
 
     try:
         # Parse frontmatter
@@ -160,7 +160,7 @@ async def index_chapter(
 
         if not content.strip():
             print(f"⚠️  {chapter_path.name}: No content found")
-            return 0
+            return [], []
 
         # Chunk content
         chunks = chunk_markdown(content, max_tokens=1000, overlap_tokens=200)
@@ -168,62 +168,40 @@ async def index_chapter(
         if verbose:
             print(f"   Generated {len(chunks)} chunks")
 
-        # Generate embeddings and create points
-        points = []
-
         for idx, chunk in enumerate(chunks):
-            # Generate embedding
-            response = openai_client.embeddings.create(
-                model="text-embedding-3-large",
-                input=chunk
-            )
-            vector = response.data[0].embedding
+            meta = {
+                "content": chunk,
+                "chapter_id": metadata.get('id', chapter_path.stem),
+                "chapter_title": metadata.get('title', metadata.get('sidebar_label', chapter_path.stem)),
+                "sidebar_label": metadata.get('sidebar_label', ''),
+                "url": f"/chapters/{metadata.get('id', chapter_path.stem)}",
+                "chunk_index": idx,
+                "total_chunks": len(chunks),
+                "difficulty": "intermediate",
+                "tokens": count_tokens(chunk),
+                "file_path": str(chapter_path)
+            }
+            metadata_list.append(meta)
 
-            # Create unique ID
-            chunk_id = hashlib.md5(
-                f"{metadata.get('id', chapter_path.stem)}-chunk-{idx}".encode()
-            ).hexdigest()
-
-            # Create point
-            point = PointStruct(
-                id=chunk_id,
-                vector=vector,
-                payload={
-                    "content": chunk,
-                    "chapter_id": metadata.get('id', chapter_path.stem),
-                    "chapter_title": metadata.get('title', metadata.get('sidebar_label', chapter_path.stem)),
-                    "sidebar_label": metadata.get('sidebar_label', ''),
-                    "url": f"/chapters/{metadata.get('id', chapter_path.stem)}",
-                    "chunk_index": idx,
-                    "total_chunks": len(chunks),
-                    "difficulty": "intermediate",
-                    "tokens": count_tokens(chunk),
-                    "file_path": str(chapter_path)
-                }
-            )
-            points.append(point)
-
-            if verbose:
-                print(f"   Chunk {idx+1}/{len(chunks)}: {count_tokens(chunk)} tokens")
-
-        # Upload to Qdrant
-        qdrant_client.upsert(
-            collection_name=collection_name,
-            points=points
-        )
-
-        print(f"✅ {chapter_path.name}: Indexed {len(chunks)} chunks")
-        return len(chunks)
+        return chunks, metadata_list
 
     except Exception as e:
         print(f"❌ {chapter_path.name}: Error - {str(e)}")
         if verbose:
             import traceback
             traceback.print_exc()
-        return 0
+        return [], []
 
 
-async def index_all_chapters(
+def generate_embeddings(client: OpenAI, texts: list[str]) -> list[list[float]]:
+    """Generate embeddings for a list of texts using OpenAI API."""
+    response = client.embeddings.create(
+        input=texts,
+        model="text-embedding-3-large"
+    )
+    return [item.embedding for item in response.data]
+
+def index_all_chapters(
     docs_dir: Path,
     force: bool = False,
     verbose: bool = False,
@@ -279,32 +257,74 @@ async def index_all_chapters(
     print("=" * 60)
 
     # Process chapters
-    total_chunks = 0
-    successful = 0
+    all_chunks = []
+    all_metadata = []
+    successful_chapters = 0
 
     for chapter_file in chapter_files:
-        chunks = await index_chapter(
-            chapter_file,
-            openai_client,
-            qdrant_client,
-            collection_name,
-            verbose=verbose
-        )
-        if chunks > 0:
-            successful += 1
-            total_chunks += chunks
+        chunks, metadata_list = get_chapter_chunks(chapter_file, verbose=verbose)
+        if chunks:
+            all_chunks.extend(chunks)
+            all_metadata.extend(metadata_list)
+            successful_chapters += 1
+
+    print(f"\n🔄 Processing {len(all_chunks)} chunks from {successful_chapters} chapters...")
+
+    # Process in batches
+    BATCH_SIZE = 32
+    total_points = 0
+
+    for i in range(0, len(all_chunks), BATCH_SIZE):
+        batch_chunks = all_chunks[i:i + BATCH_SIZE]
+        batch_metadata = all_metadata[i:i + BATCH_SIZE]
+
+        print(f"\n🔄 Processing batch {i // BATCH_SIZE + 1}/{(len(all_chunks) + BATCH_SIZE - 1) // BATCH_SIZE}...")
+
+        try:
+            # Generate embeddings for the batch
+            print(f"   Generating {len(batch_chunks)} embeddings...")
+            embeddings = generate_embeddings(openai_client, batch_chunks)
+
+            # Create points for the batch
+            points = []
+            for j, embedding in enumerate(embeddings):
+                # Create unique ID
+                chunk_id = hashlib.md5(
+                    f"{batch_metadata[j]['chapter_id']}-chunk-{batch_metadata[j]['chunk_index']}".encode()
+                ).hexdigest()
+
+                point = PointStruct(
+                    id=chunk_id,
+                    vector=embedding,
+                    payload=batch_metadata[j]
+                )
+                points.append(point)
+
+            # Upsert batch to Qdrant
+            if points:
+                qdrant_client.upsert(
+                    collection_name=collection_name,
+                    points=points
+                )
+                total_points += len(points)
+                print(f"   ✅ Upserted {len(points)} points.")
+
+        except Exception as e:
+            print(f"   ❌ Error processing batch: {e}")
+            continue
 
     # Final report
     print("\n" + "=" * 60)
     print("🎉 Indexing Complete!")
-    print(f"   Chapters processed: {successful}/{len(chapter_files)}")
-    print(f"   Total chunks indexed: {total_chunks}")
+    print(f"   Chapters processed: {successful_chapters}/{len(chapter_files)}")
+    print(f"   Total chunks indexed: {total_points}")
     print(f"   Collection: {collection_name}")
 
     # Verify collection
     info = qdrant_client.get_collection(collection_name)
     print(f"   Qdrant points: {info.points_count}")
     print("\n✅ Ready for RAG queries!")
+
 
 
 def main():
@@ -344,13 +364,11 @@ def main():
         docs_dir = script_dir.parent.parent / "physical-ai-humanoid-textbook" / "docs"
 
     # Run indexing
-    asyncio.run(
-        index_all_chapters(
-            docs_dir=docs_dir,
-            force=args.force,
-            verbose=args.verbose,
-            pattern=args.pattern
-        )
+    index_all_chapters(
+        docs_dir=docs_dir,
+        force=args.force,
+        verbose=args.verbose,
+        pattern=args.pattern
     )
 
 

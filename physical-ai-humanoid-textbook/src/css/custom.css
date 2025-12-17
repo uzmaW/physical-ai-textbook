@@ -235,6 +235,7 @@ div[class*="docMainContainer"] > .container > .row {
   min-width: 400px !important;
   margin: 0 !important;
   padding: 2rem !important;
+  transition: flex 0.3s ease, max-width 0.3s ease !important;
 }
 
 /* Right TOC/Chat column - 340px like Gmail */
@@ -275,6 +276,16 @@ aside.theme-doc-toc-desktop {
 }
 
 /* Adjust when sidebar is collapsed */
+/* When sidebar is hidden, expand main content to fill the space */
+.theme-doc-sidebar-container[style*="display: none"] ~ [class*="docItemCol"],
+.theme-doc-sidebar-container[hidden] ~ [class*="docItemCol"],
+body:has(.theme-doc-sidebar-container[style*="display: none"]) [class*="docItemCol"] {
+  flex: 1 1 auto !important;
+  max-width: calc(100vw - 370px) !important;
+  margin-left: 0 !important;
+}
+
+/* Also handle the legacy body class approach */
 body.sidebar-collapsed [class*="docSidebarContainer"],
 body.sidebar-collapsed .theme-doc-sidebar-container {
   display: none !important;
@@ -283,14 +294,26 @@ body.sidebar-collapsed .theme-doc-sidebar-container {
 body.sidebar-collapsed [class*="docItemCol"],
 body.sidebar-collapsed .col:not(.col--3) {
   margin-left: 0 !important;
-  flex: 1 1 0 !important;
-  max-width: calc(100% - 370px) !important;
+  flex: 1 1 auto !important;
+  max-width: calc(100vw - 370px) !important;
+}
+
+/* Handle Docusaurus native sidebar collapse */
+@media (min-width: 997px) {
+  /* When sidebar button is clicked and sidebar is hidden */
+  html:not(:has([class*="docSidebarContainer"]:not([hidden]):not([style*="display: none"]))) [class*="docItemCol"],
+  .container:has([class*="docSidebarContainer"][hidden]) [class*="docItemCol"],
+  .container:has([class*="docSidebarContainer"][style*="display: none"]) [class*="docItemCol"] {
+    flex: 1 1 auto !important;
+    max-width: calc(100vw - 370px) !important;
+    min-width: 0 !important;
+  }
 }
 
 /* Fix scroll jump issue */
 html {
   scroll-padding-top: 0;
-  scroll-behavior: smooth;
+  scroll-behavior: auto; /* Changed from smooth to prevent scroll issues */
 }
 
 /* Prevent scroll jump on navigation */
@@ -298,9 +321,22 @@ html {
   scroll-margin-top: 0;
 }
 
+/* Reset scroll position on page load */
+article {
+  scroll-margin-top: 0;
+}
+
 /* Anchor links scroll to exact position */
 [id] {
-  scroll-margin-top: 1rem;
+  scroll-margin-top: 0;
+}
+
+/* Force page to start at top when navigating */
+.docItemContainer_node_modules-\@docusaurus-theme-classic-lib-theme-DocItem-Layout-styles-module,
+[class*="docItemContainer"],
+.theme-doc-markdown,
+main article {
+  scroll-snap-align: start;
 }
 
 /* Chatbox animations */

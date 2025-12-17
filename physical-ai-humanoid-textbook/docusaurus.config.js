@@ -11,21 +11,24 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Load base and environment-specific .env files so process.env is populated
+// Load base and environment-specific .env files
 dotenv.config({ path: path.resolve(__dirname, '.env') });
-dotenv.config({ path: path.resolve(
-  __dirname,
-  process.env.NODE_ENV === 'production' ? '.env.production' : '.env.local'
-)});
+dotenv.config({
+  path: path.resolve(
+    __dirname,
+    process.env.NODE_ENV === 'production' ? '.env.production' : '.env.local'
+  ),
+});
 
-// Resolve API base URL once at build time (used for DefinePlugin and customFields)
+// Resolve API base URL
 const RESOLVED_API_BASE_URL =
   process.env.REACT_APP_API_URL ||
   process.env.NEXT_PUBLIC_API_URL ||
   process.env.VITE_API_URL ||
   process.env.API_BASE_URL ||
   'http://localhost:8000';
-/** @type {import('@docusaurus/types').Config & { configureWebpack?: any }} */
+
+/** @type {import('@docusaurus/types').Config} */
 const config = {
   title: 'Physical AI & Humanoid Robotics',
   tagline: 'Embodied Intelligence in Practice',
@@ -44,39 +47,28 @@ const config = {
     defaultLocale: 'en',
     locales: ['en', 'ur'],
     localeConfigs: {
-      en: {
-        label: 'English',
-        direction: 'ltr',
-        htmlLang: 'en-US',
-      },
-      ur: {
-        label: 'اردو',
-        direction: 'rtl',
-        htmlLang: 'ur-PK',
-      },
+      en: { label: 'English', direction: 'ltr', htmlLang: 'en-US' },
+      ur: { label: 'اردو', direction: 'rtl', htmlLang: 'ur-PK' },
     },
   },
 
   presets: [
     [
       'classic',
-      /** @type {import('@docusaurus/preset-classic').Options} */
-      ({
+      {
         docs: {
           routeBasePath: 'chapters',
           sidebarPath: './sidebars.js',
-          remarkPlugins: [
-            [require('remark-math'), {}],
-          ],
-          rehypePlugins: [
-            [require('rehype-katex'), {}],
-          ],
+          remarkPlugins: [[require('remark-math'), {}]],
+          rehypePlugins: [[require('rehype-katex'), {}]],
         },
         blog: false,
+
+        // ✅ Keep custom CSS (Tailwind will merge with your theme)
         theme: {
           customCss: './src/css/custom.css',
         },
-      }),
+      },
     ],
   ],
 
@@ -94,46 +86,43 @@ const config = {
     },
   ],
 
-  themeConfig:
-    /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
-    ({
-      // Disable default navbar
-      navbar: {
-        hideOnScroll: false,
-        style: 'dark',
-        items: [],
-      },
+  themeConfig: {
+    navbar: {
+      hideOnScroll: false,
+      style: 'dark',
+      items: [],
+    },
 
-      // Disable footer (will add copyright line in content)
-      footer: undefined,
+    footer: undefined,
 
-      docs: {
-        sidebar: {
-          hideable: false,
-          autoCollapseCategories: false,
-        },
+    docs: {
+      sidebar: {
+        hideable: false,
+        autoCollapseCategories: false,
       },
+    },
 
-      tableOfContents: {
-        minHeadingLevel: 2,
-        maxHeadingLevel: 5,
-      },
+    tableOfContents: {
+      minHeadingLevel: 2,
+      maxHeadingLevel: 5,
+    },
 
-      colorMode: {
-        defaultMode: 'light',
-        disableSwitch: false,
-        respectPrefersColorScheme: true,
-      },
+    colorMode: {
+      defaultMode: 'light',
+      disableSwitch: false,
+      respectPrefersColorScheme: true,
+    },
 
-      prism: {
-        theme: prismThemes.github,
-        darkTheme: prismThemes.dracula,
-        additionalLanguages: ['python', 'cpp', 'bash', 'yaml', 'json'],
-      },
-    }),
+    prism: {
+      theme: prismThemes.github,
+      darkTheme: prismThemes.dracula,
+      additionalLanguages: ['python', 'cpp', 'bash', 'yaml', 'json'],
+    },
+  },
 
   plugins: [
-    async function tailwindPlugin(context, options) {
+    // ✅ Tailwind plugin stays unchanged
+    async function tailwindPlugin() {
       return {
         name: 'docusaurus-tailwindcss',
         configurePostCss(postcssOptions) {
@@ -143,6 +132,8 @@ const config = {
         },
       };
     },
+
+    // ✅ Environment variable injection
     async function envDefinePlugin() {
       return {
         name: 'env-define-plugin',
@@ -162,12 +153,11 @@ const config = {
       };
     },
   ],
-  
-  // Expose a resolved API base URL via customFields for runtime access if needed
+
   customFields: {
     API_BASE_URL: RESOLVED_API_BASE_URL,
   },
-
-  };
+};
 
 export default config;
+

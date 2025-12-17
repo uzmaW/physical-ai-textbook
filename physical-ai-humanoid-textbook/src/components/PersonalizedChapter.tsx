@@ -5,6 +5,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useUserStore } from '@site/src/store/userStore';
+import { API_BASE_URL } from '@site/src/config/env';
 import styles from './PersonalizedChapter.module.css';
 
 interface PersonalizedChapterProps {
@@ -33,22 +34,11 @@ export function PersonalizedChapter({ id, children }: PersonalizedChapterProps):
     updatePreferences({ difficulty_preference: nextLevel });
   };
 
-  // Get API base URL (support both dev and prod)
+  // Get API base URL from centralized config
   const getApiBaseUrl = (): string => {
-    if (typeof window === 'undefined') {
-      return '/api';
-    }
-
-    // In development, use localhost:8000 directly
-    // In production, use /api which will be handled by the backend
-    const isDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-
-    if (isDev) {
-      return 'http://localhost:8000/api';
-    }
-
-    // Production: use relative path
-    return '/api';
+    // Use the centralized API_BASE_URL from env.ts
+    // This will use REACT_APP_API_URL or fallback to development URL
+    return API_BASE_URL || 'http://localhost:8000';
   };
 
   // Toggle Urdu translation
