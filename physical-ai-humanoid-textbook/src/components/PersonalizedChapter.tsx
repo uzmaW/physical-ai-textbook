@@ -79,7 +79,7 @@ export function PersonalizedChapter({ id, children }: PersonalizedChapterProps):
       console.log(`[Translation] Content length: ${textContent.length} chars`);
 
       // Check cache first
-      const cacheUrl = `${apiBase}/translate/cached?userId=${userId}&chapterId=${id}`;
+      const cacheUrl = `${apiBase}/api/translate/cached?userId=${userId}&chapterId=${id}`;
       console.log(`[Translation] Checking cache: ${cacheUrl}`);
       console.log(`[Translation] Full URL will be:`, window.location.origin + cacheUrl);
 
@@ -92,9 +92,9 @@ export function PersonalizedChapter({ id, children }: PersonalizedChapterProps):
         setIsUrdu(true);
       } else {
         console.log(`[Translation] Cache miss (${cacheResponse.status}), fetching new translation...`);
-        
+
         // Translate and cache
-        const translateUrl = `${apiBase}/translate/`;
+        const translateUrl = `${apiBase}/api/translate/`;
         console.log(`[Translation] POST to ${translateUrl}`);
         console.log(`[Translation] Full URL will be:`, window.location.origin + translateUrl);
 

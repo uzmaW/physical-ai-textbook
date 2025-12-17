@@ -20,7 +20,9 @@ const ChapterWrapper = ({ children, ...props }: any) => {
   const getChapterId = () => {
     if (typeof window !== 'undefined') {
       const path = window.location.pathname;
-      return path.replace(/\//g, '-').substring(1) || 'chapter';
+      // Extract just the last segment (e.g., /chapters/week-03 -> week-03)
+      const segments = path.split('/').filter(Boolean);
+      return segments[segments.length - 1] || 'chapter';
     }
     return 'chapter';
   };
