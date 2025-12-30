@@ -3,6 +3,10 @@
  * Implements 3-column layout: Sidebar | Content | RAG Chat
  */
 
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 /* ==========================================================================
    CSS Variables / Theme
    ========================================================================== */
@@ -49,6 +53,203 @@ footer.footer,
 
 .theme-doc-toc-mobile {
   display: none !important;
+}
+
+/* Hide default navbar and footer */
+nav.navbar {
+  display: none !important;
+}
+
+footer.footer {
+  display: none !important;
+}
+
+/* Hide default table of contents */
+.theme-doc-toc-desktop {
+  display: block !important;
+}
+
+.table-of-contents {
+  display: none !important;
+}
+
+/* ==========================================================================
+   Added proper styling for doc controls row (badges, personalize, translate)
+   ========================================================================== */
+
+/* Controls row container - the row with Intermediate badge, Personalize, and Translate */
+.doc-controls-row,
+.theme-doc-breadcrumbs + div,
+nav[aria-label="Breadcrumbs"] + div,
+.breadcrumbs__wrapper + div {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  gap: 0.75rem !important;
+  flex-wrap: wrap !important;
+  margin-bottom: 1rem !important;
+  padding: 0.5rem 0 !important;
+}
+
+/* Badge styling - "Intermediate" pill */
+.badge,
+span[class*="badge"],
+.theme-doc-version-badge {
+  display: inline-flex !important;
+  align-items: center !important;
+  padding: 0.25rem 0.75rem !important;
+  font-size: 0.8rem !important;
+  font-weight: 500 !important;
+  border-radius: 9999px !important;
+  white-space: nowrap !important;
+  background: #dbeafe !important;
+  color: #1e40af !important;
+  border: none !important;
+}
+
+[data-theme="dark"] .badge,
+[data-theme="dark"] span[class*="badge"] {
+  background: #1e3a5f !important;
+  color: #93c5fd !important;
+}
+
+/* Personalize button styling */
+button[class*="personalize"],
+.personalize-btn,
+button:has(svg):has(span) {
+  display: inline-flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 0.375rem !important;
+  padding: 0.25rem 0.75rem !important;
+  font-size: 0.8rem !important;
+  font-weight: 500 !important;
+  border-radius: 9999px !important;
+  background: #fef3c7 !important;
+  color: #92400e !important;
+  border: none !important;
+  cursor: pointer !important;
+  white-space: nowrap !important;
+  transition: background 0.15s ease !important;
+}
+
+button[class*="personalize"]:hover,
+.personalize-btn:hover {
+  background: #fde68a !important;
+}
+
+[data-theme="dark"] button[class*="personalize"],
+[data-theme="dark"] .personalize-btn {
+  background: #78350f !important;
+  color: #fef3c7 !important;
+}
+
+[data-theme="dark"] button[class*="personalize"]:hover,
+[data-theme="dark"] .personalize-btn:hover {
+  background: #92400e !important;
+}
+
+/* Translate button styling - Urdu text */
+.translate-btn,
+button[class*="translate"],
+button:has([lang="ur"]) {
+  display: inline-flex !important;
+  align-items: center !important;
+  padding: 0.25rem 0.5rem !important;
+  font-family: "Noto Nastaliq Urdu", serif !important;
+  font-size: 1rem !important;
+  color: #6b7280 !important;
+  background: transparent !important;
+  border: none !important;
+  cursor: pointer !important;
+  transition: color 0.15s ease !important;
+}
+
+.translate-btn:hover,
+button[class*="translate"]:hover {
+  color: #374151 !important;
+}
+
+[data-theme="dark"] .translate-btn,
+[data-theme="dark"] button[class*="translate"] {
+  color: #9ca3af !important;
+}
+
+[data-theme="dark"] .translate-btn:hover,
+[data-theme="dark"] button[class*="translate"]:hover {
+  color: #e5e7eb !important;
+}
+
+/* ==========================================================================
+   Added proper styling for AI Assistant toolbar icons
+   ========================================================================== */
+
+/* AI Assistant toolbar container */
+.ai-toolbar,
+[class*="chatToolbar"],
+[class*="toolbar-buttons"],
+.theme-doc-toc-desktop [role="toolbar"] {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 0.5rem !important;
+  padding: 0.5rem 0.75rem !important;
+  flex-wrap: nowrap !important;
+  overflow-x: auto !important;
+}
+
+/* AI Assistant icon buttons */
+.ai-toolbar button,
+[class*="chatToolbar"] button,
+.theme-doc-toc-desktop button[class*="icon"],
+.theme-doc-toc-desktop [class*="toolbarBtn"],
+.theme-doc-toc-desktop button:has(svg):not([class*="send"]) {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 32px !important;
+  height: 32px !important;
+  min-width: 32px !important;
+  min-height: 32px !important;
+  padding: 0 !important;
+  border: 1px solid #e5e7eb !important;
+  border-radius: 6px !important;
+  background: #f9fafb !important;
+  color: #6b7280 !important;
+  cursor: pointer !important;
+  flex-shrink: 0 !important;
+  transition: all 0.15s ease !important;
+}
+
+.ai-toolbar button:hover,
+[class*="chatToolbar"] button:hover,
+.theme-doc-toc-desktop button[class*="icon"]:hover {
+  background: #e5e7eb !important;
+  color: #374151 !important;
+  border-color: #d1d5db !important;
+}
+
+[data-theme="dark"] .ai-toolbar button,
+[data-theme="dark"] [class*="chatToolbar"] button,
+[data-theme="dark"] .theme-doc-toc-desktop button[class*="icon"] {
+  background: #374151 !important;
+  border-color: #4b5563 !important;
+  color: #9ca3af !important;
+}
+
+[data-theme="dark"] .ai-toolbar button:hover,
+[data-theme="dark"] [class*="chatToolbar"] button:hover {
+  background: #4b5563 !important;
+  color: #e5e7eb !important;
+}
+
+/* Icon SVG sizing inside buttons */
+.ai-toolbar button svg,
+[class*="chatToolbar"] button svg,
+.theme-doc-toc-desktop button svg {
+  width: 16px !important;
+  height: 16px !important;
 }
 
 /* ==========================================================================
@@ -665,4 +866,103 @@ figcaption {
 
 .cover-page > div:last-child p {
   margin: 0.25rem 0;
+}
+
+/* ==========================================================================
+   Fix for Doc Controls Row (Intermediate, Personalize, Translate)
+   These selectors target the actual elements more precisely
+   ========================================================================== */
+
+/* Target the flex container holding badges and buttons above the title */
+article > div:first-child,
+.theme-doc-markdown > div:first-child,
+[class*="docItemContainer"] > article > div:first-child {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 0.75rem !important;
+  flex-wrap: wrap !important;
+  margin-bottom: 0.75rem !important;
+}
+
+/* Fix badge - ensure it's inline and visible */
+article span[class*="badge"],
+article .badge,
+span.badge {
+  display: inline-flex !important;
+  align-items: center !important;
+  padding: 0.25rem 0.75rem !important;
+  font-size: 0.8rem !important;
+  font-weight: 500 !important;
+  border-radius: 9999px !important;
+  background: #dbeafe !important;
+  color: #1e40af !important;
+  white-space: nowrap !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+
+[data-theme="dark"] article span[class*="badge"],
+[data-theme="dark"] article .badge {
+  background: #1e3a5f !important;
+  color: #93c5fd !important;
+}
+
+/* Fix Personalize button - inline with icon */
+article button[class*="ersonalize"],
+article button:has(svg + span),
+button.personalize-btn {
+  display: inline-flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 0.375rem !important;
+  padding: 0.25rem 0.75rem !important;
+  font-size: 0.8rem !important;
+  font-weight: 500 !important;
+  border-radius: 9999px !important;
+  background: #fef3c7 !important;
+  color: #92400e !important;
+  border: none !important;
+  cursor: pointer !important;
+  white-space: nowrap !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+
+article button[class*="ersonalize"]:hover,
+button.personalize-btn:hover {
+  background: #fde68a !important;
+}
+
+[data-theme="dark"] article button[class*="ersonalize"],
+[data-theme="dark"] button.personalize-btn {
+  background: #78350f !important;
+  color: #fef3c7 !important;
+}
+
+/* Fix Translate button - Urdu text visible */
+article button.translate-btn,
+article button[class*="translate"],
+button[lang="ur"],
+article button:last-of-type {
+  display: inline-flex !important;
+  align-items: center !important;
+  padding: 0.25rem 0.5rem !important;
+  font-family: "Noto Nastaliq Urdu", serif !important;
+  font-size: 1rem !important;
+  color: #6b7280 !important;
+  background: transparent !important;
+  border: none !important;
+  cursor: pointer !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+
+/* Added missing hover state for translate button */
+article button.translate-btn:hover {
+  color: #374151 !important;
+}
+
+[data-theme="dark"] article button.translate-btn:hover {
+  color: #e5e7eb !important;
 }
