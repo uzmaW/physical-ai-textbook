@@ -15,7 +15,7 @@ import Footer from '@theme/Footer';
 import LayoutProvider from '@theme/Layout/Provider';
 import ErrorPageContent from '@theme/ErrorPageContent';
 import {ThemeClassNames} from '@docusaurus/theme-common';
-import {useDocusaurusContext} from '@docusaurus/core';
+import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import BookCover from '../BookCover';
 import ChatSidebar from '../ChatSidebar';
 import TableOfContents from '../TableOfContents';
@@ -48,62 +48,20 @@ function Layout(props) {
       <AnnouncementBar />
       {!props.isHomePage && <Navbar />}
 
-      <div
+     
+        
+        {!props.isHomePage && (
+           <div
         className={clsx(
           ThemeClassNames.wrapper.main,
           styles.wrapper,
           wrapperClassName,
         )}>
+        {/* Book Header with Logo and Title (Home only) */}
+      
         
-        {/* Book Header with Logo and Title */}
-        <header className={styles.bookHeader}>
-          <div className={styles.headerContent}>
-            {bookConfig.logo && (
-              <img 
-                src={bookConfig.logo} 
-                alt={`${siteTitle} Logo`}
-                className={styles.bookLogo}
-              />
-            )}
-            <div className={styles.bookTitleSection}>
-              <h1 className={styles.bookTitle}>{siteTitle}</h1>
-              {tagline && <p className={styles.bookSubtitle}>{tagline}</p>}
-            </div>
-          </div>
-        </header>
-
-        {/* Main Book Layout */}
-        <div className={styles.bookContainer}>
-          
-          {/* Book Cover Page */}
-          {props.isHomePage && (
-            <BookCover 
-              title={siteTitle}
-              subtitle={tagline}
-              coverImage={bookConfig.coverImage}
-              authors={bookConfig.authors}
-              onStartReading={() => {
-                // Scroll to content or navigate to first chapter
-                window.scrollTo({ 
-                  top: window.innerHeight, 
-                  behavior: 'smooth' 
-                });
-              }}
-            />
-          )}
-
-          {/* Three-Column Layout for Content Pages */}
-          {!props.isHomePage && (
             <div className={styles.contentLayout}>
-              
-              {/* Left Sidebar - Table of Contents */}
-              <aside className={styles.leftSidebar}>
-                <div className={styles.tocContainer}>
-                  <TableOfContents />
-                </div>
-              </aside>
-
-              {/* Main Content */}
+              {/* Let Docusaurus render the default DocSidebar on the left and the doc content */}
               <main className={styles.mainContent}>
                 <div
                   className={clsx(
@@ -121,13 +79,44 @@ function Layout(props) {
               <aside className={styles.rightSidebar}>
                 <ChatSidebar />
               </aside>
-
+            </div>
+            {!noFooter && <Footer />}
             </div>
           )}
-        </div>
+          
+          {/* Book Cover Page */}
+          {props.isHomePage && (
+            <>
+         
+            <BookCover 
+              title={siteTitle}
+              subtitle={tagline}
+              bookStyle={styles.bookLogo}
+              logoImage={bookConfig.logo}
+              coverImage={bookConfig.coverImage}
+              authors={bookConfig.authors}
+              onStartReading={() => {
+                // Navigate to the first chapter (Introduction)
+                if (typeof window !== 'undefined') {
+                  const target = '/chapters/intro';
+                  // Prefer SPA navigation if available
+                  try {
+                    // Docusaurus injects a client-side router; fall back to full reload if not available
+                    const nav = window?.docusaurus?.router?.history;
+                    if (nav && typeof nav.push === 'function') {
+                      nav.push(target);
+                    } else {
+                      window.location.assign(target);
+                    }
+                  } catch {
+                    window.location.assign(target);
+                  }
+                }
+              }}
+            />
+            </>
+          )}
 
-        {!noFooter && <Footer />}
-      </div>
     </LayoutProvider>
   );
 }

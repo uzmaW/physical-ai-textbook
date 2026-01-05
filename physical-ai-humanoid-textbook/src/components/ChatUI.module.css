@@ -43,6 +43,7 @@
 }
 
 /* Subtle background effect */
+/* Disabled shimmer when expanded via body class in custom.css overrides */
 .chatHeader::before {
   content: '';
   position: absolute;

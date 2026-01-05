@@ -156,6 +156,11 @@ const config = {
 
   customFields: {
     API_BASE_URL: RESOLVED_API_BASE_URL,
+    bookConfig: {
+      logo: '/img/logo.svg',
+      coverImage: '/img/logo.svg',
+      authors: ['PIAIC Contributors'],
+    },
   },
 };
 

@@ -10,6 +10,8 @@
 /* ==========================================================================
    CSS VARIABLES
    ========================================================================== */
+html { scroll-behavior: smooth; }
+
 :root {
   --ifm-color-primary: #1e40af;
   --ifm-color-primary-dark: #1e3a8a;
@@ -19,14 +21,13 @@
   --ifm-color-primary-lightest: #93c5fd;
   --ifm-code-font-size: 95%;
   --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.1);
-  --ifm-navbar-height: 0px;
+  --ifm-navbar-height: 60px;
   --ifm-footer-padding-vertical: 0px;
 }
 
 /* ==========================================================================
    HIDE DEFAULT ELEMENTS
    ========================================================================== */
-nav.navbar,
 footer.footer,
 .table-of-contents {
   display: none !important;
@@ -37,12 +38,57 @@ footer.footer,
 }
 
 /* ==========================================================================
+   TOC / Sidebar caret styling
+   ========================================================================== */
+:root {
+  /* Beautiful chevron icon for sublist caret */
+  --ifm-menu-link-sublist-icon: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='9 18 15 12 9 6'/></svg>");
+  /* Optional RTL variant */
+  --ifm-menu-link-sublist-icon-rtl: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='15 18 9 12 15 6'/></svg>");
+  --ifm-menu-link-sublist-icon-size: 0.85rem;
+}
+
+.theme-doc-sidebar-menu .menu__link--sublist {
+  font-weight: 600;
+}
+.theme-doc-sidebar-menu .menu__link--sublist:after {
+  transition: transform 0.2s ease, background-color 0.2s ease;
+}
+.theme-doc-sidebar-menu .menu__link--sublist:hover {
+  color: var(--ifm-color-primary);
+}
+
+/* Avoid accidental double padding when layout wrappers change */
+.theme-doc-sidebar-container + .main-wrapper {
+  padding-top: 0;
+}
+
+/* ==========================================================================
+   Sidebar spacing & density
+   ========================================================================== */
+/* Reduce default padding and indentation in DocSidebar */
+aside.theme-doc-sidebar-container { padding: 0 !important; }
+.theme-doc-sidebar-menu { padding: 0.5rem 0.5rem !important; }
+.theme-doc-sidebar-menu .menu__list { padding-left: 0 !important; }
+.theme-doc-sidebar-menu .menu__list-item { margin: 0 !important; }
+.theme-doc-sidebar-menu .menu__link { padding: 6px 10px !important; border-radius: 6px; }
+/* Reduce nested list indent */
+.theme-doc-sidebar-menu .menu__list .menu__list { margin-left: 8px !important; }
+
+/* ==========================================================================
    MAIN LAYOUT
    ========================================================================== */
+
+/* Hide right TOC column and expand main doc column to full width */
+.theme-doc-toc-desktop { display: none !important; }
+main[class*="docMainContainer"] .col.docItemCol { flex: 1 1 auto !important; max-width: 100% !important; }
+
 .main-wrapper {
   display: flex;
   min-height: 100vh;
   position: relative;
+  padding-top: 0px; /* Ensure content is not overlapped by fixed header */
+  margin-top:30px;
 }
 
 /* Sidebar (Left) */
@@ -50,28 +96,153 @@ aside.theme-doc-sidebar-container {
   width: 300px;
   flex-shrink: 0;
   overflow-y: auto;
-  background: #f8f9fa;
-  border-right: 1px solid #e9ecef;
+  background: var(--ifm-background-color);
+  border-right: 1px solid var(--ifm-toc-border-color);
+  transition: width 0.3s ease, margin 0.3s ease;
+  position: sticky;
+  top: var(--ifm-navbar-height);
+  height: calc(100vh - var(--ifm-navbar-height));
+  z-index: 900; /* below header (1200) */
 }
 
+/* Ensure chat sidebar remains fixed to the right only when chat is visible */
+.chat-visible .main-wrapper {
+  padding-right: 350px; /* Reserve space for chat sidebar */
+}
+@media (max-width: 992px) {
+  .chat-visible .main-wrapper {
+    padding-right: 0; /* Use full width on smaller screens */
+  }
+}
+
+@media (max-width: 992px) {
+  /* padding-right controlled by .chat-visible */
+}
+
+/* Prevent content underlap with header for any other wrappers */
+:global(#__docusaurus) {
+  padding-top: var(--ifm-navbar-height);
+}
+
+/* Chat expand/collapse body classes */
+.chat-expanded .chat-sidebar-container {
+  width: clamp(360px, 40vw, 560px);
+}
+.chat-visible:not(.chat-expanded):not(.chat-collapsed) .chat-sidebar-container {
+  width: 350px;
+}
+.chat-expanded .main-wrapper {
+  padding-right: clamp(360px, 40vw, 560px);
+}
+.chat-collapsed .chat-sidebar-container {
+  width: 0 !important;
+  min-width: 0 !important;
+  max-width: 0 !important;
+  border-left: none !important;
+  overflow: hidden !important;
+}
+.chat-collapsed .main-wrapper {
+  padding-right: 0 !important;
+}
+
+/* Ensure opaque background when chat is expanded so content underneath is not visible */
+.chat-expanded .chat-sidebar-container {
+  background: var(--ifm-background-color) !important;
+  box-shadow: -8px 0 24px rgba(0,0,0,0.08);
+}
+.chat-expanded .chat-sidebar-container .chatContainer {
+  background: var(--ifm-background-color) !important;
+}
+.chat-expanded .chat-sidebar-container .messagesContainer,
+.chat-expanded .chat-sidebar-container .inputContainer,
+.chat-expanded .chat-sidebar-container .header,
+.chat-expanded .chat-sidebar-container .chatHeader {
+  background: var(--ifm-background-color) !important;
+}
+/* Remove any decorative transparent gradients when expanded */
+.chat-expanded .chat-sidebar-container .chatContainer::before,
+.chat-expanded .chat-sidebar-container .chatContainer::after,
+.chat-expanded .chat-sidebar-container .chatHeader::before {
+  content: none !important;
+}
+
+@media (max-width: 992px) {
+  .chat-expanded .chat-sidebar-container,
+  .chat-visible:not(.chat-expanded):not(.chat-collapsed) .chat-sidebar-container {
+    width: 100%;
+  }
+  .chat-expanded .main-wrapper,
+  .chat-visible:not(.chat-expanded):not(.chat-collapsed) .main-wrapper {
+    padding-right: 0;
+  }
+}
 /* Main Content (Center) */
-.docMainContainer {
+main[class*="docMainContainer"] {
   flex: 1;
   min-width: 0;
   padding: 2rem;
+  margin-right: 0; /* Width is constrained by wrapper padding-right */
+}
+
+/* Ensure doc content respects header height */
+main[class*="docMainContainer"] .row {
+  margin-top: 0;
+}
+
+/* Guarantee main doc content not overlapped by header across wrappers */
+.theme-doc-main-container,
+main[class*="docMainContainer"],
+.theme-doc-markdown {
+  scroll-margin-top: 30px;
 }
 
 /* Chat Sidebar (Right) */
 .chat-sidebar-container {
   position: fixed;
   right: 0;
-  top: 0;
+  top: var(--ifm-navbar-height); /* Start below navbar */
   width: 350px;
-  height: 100vh;
-  background: #ffffff;
-  border-left: 1px solid #e9ecef;
+  height: calc(100vh - var(--ifm-navbar-height)); /* Full height minus navbar */
+  background: var(--ifm-background-color);
+  border-left: 1px solid var(--ifm-toc-border-color);
   overflow-y: auto;
+  z-index: 1100; /* below header (1200), above content */
 }
+
+@media (max-width: 992px) {
+  .chat-sidebar-container {
+    position: relative;
+    top: 0;
+    width: 100%;
+    height: auto;
+    min-height: 420px;
+  }
+}
+
+
+/* Sidebar collapsed state */
+.sidebar-collapsed aside.theme-doc-sidebar-container {
+  width: 0 !important;
+  margin: 0 !important;
+  border-right: none !important;
+}
+
+/* Animate sidebar width for smoother UX */
+aside.theme-doc-sidebar-container {
+  transition: width 0.25s ease, margin 0.25s ease;
+}
+
+/* Improve collapse behavior to free layout space and disable interactions */
+.sidebar-collapsed aside.theme-doc-sidebar-container {
+  min-width: 0 !important;
+  max-width: 0 !important;
+  width: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  pointer-events: none !important;
+}
+.sidebar-collapsed aside.theme-doc-sidebar-container * { display: none !important; }
+
 
 /* ==========================================================================
    COVER PAGE
@@ -84,7 +255,7 @@ aside.theme-doc-sidebar-container {
   height: 100vh;
   padding: 2rem;
   text-align: center;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
   color: white;
 }
 
@@ -96,10 +267,11 @@ aside.theme-doc-sidebar-container {
 
 .cover-title {
   font-size: 3rem;
-  font-weight: 700;
-  color: #1e40af;
+  font-weight: 800;
+  color: #ffffff;
   margin-bottom: 1rem;
-  line-height: 1.2;
+  line-height: 1.1;
+  text-shadow: 0 2px 8px rgba(0,0,0,0.25);
 }
 
 .cover-subtitle {
@@ -111,17 +283,18 @@ aside.theme-doc-sidebar-container {
 .cover-cta {
   display: inline-block;
   padding: 1rem 2rem;
-  background: #fbbf24;
+  background: var(--ifm-color-primary);
   color: white;
   text-decoration: none;
   border-radius: 0.5rem;
-  font-weight: 600;
+  font-weight: 700;
   font-size: 1.125rem;
-  transition: all 0.3s ease;
+  transition: all 0.2s ease;
+  border: 1px solid rgba(255,255,255,0.25);
 }
 
 .cover-cta:hover {
-  background: #f59e0b;
+  background: var(--ifm-color-primary-dark);
   transform: translateY(-2px);
-  box-shadow: 0 10px 25px rgba(251, 146, 60, 0.2);
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
 }

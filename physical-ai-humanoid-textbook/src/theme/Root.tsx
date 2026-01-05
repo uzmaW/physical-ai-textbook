@@ -26,15 +26,6 @@ export default function Root({children}) {
 
   return (
     <>
-      {isCollapsed && (
-        <button
-          className="expandSidebarButton"
-          onClick={expandSidebar}
-          title="Show sidebar"
-        >
-          <Menu size={20} />
-        </button>
-      )}
       {children}
     </>
   );

@@ -6,7 +6,7 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation } from '@docusaurus/router';
 import Link from '@docusaurus/Link';
-import { useDocusaurusContext } from '@docusaurus/core';
+import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import clsx from 'clsx';
 import { 
   ChevronRight, 

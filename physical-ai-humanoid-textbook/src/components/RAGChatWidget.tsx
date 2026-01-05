@@ -50,8 +50,14 @@ export function RAGChatWidget() {
   const [input, setInput] = useState('');
   const [selectedText, setSelectedText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [isExpanded, setIsExpanded] = useState(false);
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isExpanded, setIsExpanded] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return localStorage.getItem('chat-expanded') === 'true';
+  });
+  const [isCollapsed, setIsCollapsed] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return localStorage.getItem('chat-collapsed') === 'true';
+  });
   const [showHistory, setShowHistory] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -60,12 +66,39 @@ export function RAGChatWidget() {
 
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
 
+  // Sync body classes and persist state
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    document.body.classList.toggle('chat-expanded', isExpanded && !isCollapsed);
+    if (isExpanded && !isCollapsed) {
+      localStorage.setItem('chat-expanded', 'true');
+    } else {
+      localStorage.setItem('chat-expanded', 'false');
+    }
+  }, [isExpanded, isCollapsed]);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    document.body.classList.toggle('chat-collapsed', isCollapsed);
+    localStorage.setItem('chat-collapsed', isCollapsed ? 'true' : 'false');
+    if (isCollapsed) {
+      // Ensure expanded is false when collapsed
+      setIsExpanded(false);
+    }
+  }, [isCollapsed]);
+
   // Auto-scroll to bottom
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const container = messagesContainerRef.current;
+    if (container) {
+      container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+    } else {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   };
 
   useEffect(() => {
@@ -180,12 +213,15 @@ export function RAGChatWidget() {
   if (isCollapsed) {
     return (
       <button
-        className={styles.expandChatButton}
-        onClick={() => setIsCollapsed(false)}
+        className={styles.collapsedButton}
+        onClick={() => {
+          setIsCollapsed(false);
+          // Keep previous expanded pref
+        }}
         title="Open Chat"
         style={{
           position: 'fixed',
-          top: '1rem',
+          top: '5rem',
           right: '1rem',
           zIndex: 1000,
           width: '48px',
@@ -269,7 +305,7 @@ export function RAGChatWidget() {
               onClick={(e) => {
                 e.stopPropagation();
                 const newExpandedState = !isExpanded;
-                console.log('Expand clicked, changing from', isExpanded, 'to', newExpandedState);
+                setIsCollapsed(false);
                 setIsExpanded(newExpandedState);
               }}
               className={styles.iconButton}
@@ -278,7 +314,10 @@ export function RAGChatWidget() {
               {isExpanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
             </button>
                <button
-              onClick={() => setIsCollapsed(true)}
+              onClick={() => {
+                setIsCollapsed(true);
+                setIsExpanded(false);
+              }}
               className={styles.iconButton}
               title="Collapse chat"
             >
@@ -392,7 +431,7 @@ export function RAGChatWidget() {
       )}
 
       {/* Messages */}
-      <div className={styles.messagesContainer}>
+      <div className={styles.messagesContainer} ref={messagesContainerRef}>
         {messages.map((msg) => (
           <div
             key={msg.id}

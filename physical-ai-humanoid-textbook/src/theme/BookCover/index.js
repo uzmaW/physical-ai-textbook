@@ -10,6 +10,8 @@ import styles from './styles.module.css';
 function BookCover({
   title,
   subtitle,
+  bookStyle,
+  logoImage,
   coverImage,
   authors = [],
   onStartReading,
@@ -17,6 +19,21 @@ function BookCover({
 }) {
   return (
     <div className={clsx(styles.bookCover, className)}>
+          {/* <header className={styles.bookHeader}>
+            <div className={styles.headerContent}>
+              {logoImage && (
+                <img 
+                  src={logoImage} 
+                  alt={`${title} Logo`}
+                  className={bookStyle}
+                />
+              )}
+              <div className={styles.bookTitleSection}>
+                <h1 className={styles.bookTitle}>{title}</h1>
+                {subtitle && <p className={styles.bookSubtitle}>{subtitle}</p>}
+              </div>
+            </div>
+          </header> */}
       <div className={styles.coverContent}>
         {coverImage && (
           <img 
@@ -31,7 +48,7 @@ function BookCover({
         </h1>
         
         {subtitle && (
-          <p className={styles.coverSubtitle}>
+          <p className="{styles.coverSubtitle} text-center">
             {subtitle}
           </p>
         )}

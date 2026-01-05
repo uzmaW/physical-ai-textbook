@@ -16,6 +16,7 @@ export default function Home(): JSX.Element {
       title={`${siteConfig.title}`}
       description="Open-Access University Textbook on Physical AI and Humanoid Robotics"
       noFooter={true}
+      isHomePage={true}
     >
       <div className="cover-page">
         {/* Book Logo */}
