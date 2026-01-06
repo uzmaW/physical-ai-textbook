@@ -1,4 +1,4 @@
-name: Deploy to Render
+name: Deploy to Vercel
 
 on:
   push:
@@ -21,16 +21,14 @@ jobs:
           cache: 'npm'
           cache-dependency-path: physical-ai-humanoid-textbook/package-lock.json
 
-      - name: Install Vercel CLI
-        run: npm install -g vercel
-
-      - name: Deploy to Vercel
+      - name: Deploy to Vercel via CLI
         working-directory: physical-ai-humanoid-textbook
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}       # optional
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }} # optional
         run: |
           echo "🚀 Deploying to Vercel..."
-          vercel deploy --prod --token=$VERCEL_TOKEN
+          # use npx so we don't need a global install
+          npx vercel --prod --token="$VERCEL_TOKEN" --confirm
           echo "✅ Frontend deployed!"
